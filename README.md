@@ -1,4 +1,4 @@
-# Folder Tidy
+# Folder Tidy 🧹 — A Little Less File Chaos
 
 A small Python script that sorts loose files into folders like `Images`,
 `Documents`, and `Audio`. Useful for tidying a Downloads folder.
