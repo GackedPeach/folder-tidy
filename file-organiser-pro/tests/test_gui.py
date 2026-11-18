@@ -13,10 +13,24 @@ import organiser_core as core
 
 
 class GuiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Aqua/Tk should use one interpreter per process. Recreating Tk for
+        # every test can hang the macOS event loop after the first window.
+        try:
+            cls.shared_root = tk.Tk()
+        except tk.TclError as exc:
+            raise unittest.SkipTest(f"Tk display unavailable: {exc}")
+        cls.shared_root.withdraw()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.shared_root.destroy()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.folder = Path(self.temp.name)
+        self.folder = Path(self.temp.name).resolve()
         settings = core.load_settings(self.folder / "settings.json")
         for mocker in (
             patch.object(core, "load_settings", return_value=settings),
@@ -25,11 +39,7 @@ class GuiTests(unittest.TestCase):
         ):
             mocker.start()
             self.addCleanup(mocker.stop)
-        try:
-            self.root = tk.Tk()
-        except tk.TclError as exc:
-            self.skipTest(f"Tk display unavailable: {exc}")
-        self.root.withdraw()
+        self.root = self.shared_root
         self.addCleanup(self.destroy_window)
         self.app = gui.FileOrganiser(self.root)
 
@@ -38,7 +48,11 @@ class GuiTests(unittest.TestCase):
             self.root.update_idletasks()
             for callback in self.root.tk.call("after", "info"):
                 self.root.after_cancel(callback)
-            self.root.destroy()
+            for event in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                self.root.unbind(event)
+            for child in self.root.winfo_children():
+                child.destroy()
+            self.root.protocol("WM_DELETE_WINDOW", "")
         except tk.TclError:
             pass
 
