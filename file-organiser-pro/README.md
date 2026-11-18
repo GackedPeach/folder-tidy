@@ -1,4 +1,4 @@
-# File Organiser Pro — v1.1
+# File Organiser Pro — v1.1.1
 
 A local-first, cross-platform desktop file organiser, written in Python 3.10+ and Tkinter. No cloud access, telemetry, package manager or third-party Python dependencies.
 
@@ -39,7 +39,30 @@ On macOS, use a Python distribution that includes Tkinter.
 7. Use **Find Duplicates** to display size-and-SHA-256 matches without deleting anything. The duplicate tab is read-only.
 8. Use **Export TXT / CSV…** in Activity Log to save a report from the current session.
 
-## New in v1.1
+## New in v1.1.1
+
+This is a small reliability update to v1.1, keeping the same features and
+settings format.
+
+- Fixed the copy fallback on Windows: the source reader is closed before
+  removing the original file.
+- Finished destination checks before removing the original, so a later
+  metadata-read failure cannot trigger deletion of the only remaining copy.
+- Check that undo history can be saved before moving or restoring files.
+  If a history update fails after a completed move, stop immediately, report
+  the completed move accurately, and show its paths in the activity log.
+  Keep the app open and export the log if that warning appears; the last
+  move may need manual recovery.
+- Keep the previous operation's undo history until a new move succeeds.
+- Closing during an operation requests cancellation and waits for file work
+  and history updates to finish.
+- Load large move previews in batches and limit event processing per UI tick,
+  allowing the window to respond while displaying thousands of files.
+- Reuse collision suffix counters when many files share a name.
+- Added regression tests for copy failures, cancellation, undo-history errors,
+  safe shutdown, and a 10,000-row preview.
+
+## Included since v1.1
 
 - No-overwrite moves using exclusive destination creation. Same-filesystem regular files use hard-link/unlink where supported; other cases use exclusive-create streaming copy/unlink.
 - Source identity, size and modification-time checks at preview and move time.
@@ -73,7 +96,11 @@ Both files are updated via temporary-file-and-replace writes. Older settings fil
 - Empty directories are left in place after organising/undoing, by design.
 - Hidden-file detection recognises dot-names on POSIX and Windows hidden attributes where available. A filesystem-specific hidden convention may differ.
 - Metadata-only stale-preview checks cannot detect an adversary who replaces content while restoring all compared metadata. SHA-256 is used for duplicate detection, not for every file move.
-- Basic automated tests and an interactive GUI smoke test were run on Linux. Windows and macOS compatibility is designed for, but has not been independently verified in those environments.
+- v1.1 was tested on Linux. The v1.1.1 regression suite was also run on Windows
+  with Python 3.12, including Tk interface tests and a forced copy-fallback test.
+  Two symbolic-link tests were skipped because this Windows session cannot
+  create symlinks. A physical cross-volume move and macOS have not been tested
+  for this update.
 
 ## Run automated tests
 
@@ -84,15 +111,19 @@ python -m unittest discover -s tests -v
 ```
 
 The tests use temporary directories; they do not organise your real files.
+Interface tests use a withdrawn Tk window and isolated settings. They skip
+when Tk or a display is unavailable. On a headless Linux machine with Xvfb,
+use `xvfb-run -a python -m unittest discover -s tests -v` to include them.
 
 ## Project layout
 
 ```text
-file_organiser_pro_v1_1/
+file_organiser_pro_v1_1_1/
 ├── file_organiser_pro.py     # Tkinter user interface
 ├── organiser_core.py         # Filesystem and hash operations
 ├── tests/
-│   └── test_organiser_core.py
+│   ├── test_organiser_core.py
+│   └── test_gui.py
 └── README.md
 ```
 

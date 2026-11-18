@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import organiser_core as core
@@ -225,6 +226,141 @@ class OrganiserTests(unittest.TestCase):
         destinations = [p["destination"] for p in self.plan()]
         self.assertEqual(len(set(destinations)), 2)
         self.assertTrue(any(Path(p).name == "document_1.txt" for p in destinations))
+
+    def test_move_does_not_read_destination_after_removing_original(self):
+        original = self.write("file.txt", b"keep this content")
+        entry = self.plan()[0]
+        real_signature = core.signature
+
+        def checked_signature(path):
+            if Path(path) == Path(entry["destination"]) and not original.exists():
+                raise OSError("Destination temporarily inaccessible after move")
+            return real_signature(path)
+
+        with patch("organiser_core.signature", side_effect=checked_signature):
+            result = core.organise([entry], self.root, history_path=self.history)
+        self.assertEqual(result["moved"], 1)
+        self.assertFalse(original.exists())
+        self.assertEqual(Path(entry["destination"]).read_bytes(), b"keep this content")
+        self.assertEqual(core.undo(self.history)["restored"], 1)
+
+    def test_copy_failure_preserves_original_and_removes_partial_copy(self):
+        import errno
+        original = self.write("file.txt", b"important")
+        entry = self.plan()[0]
+        with patch("organiser_core.os.link", side_effect=OSError(errno.EXDEV, "cross-device")), \
+             patch("organiser_core.os.fsync", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                core.move_exclusive(original, entry["destination"], entry["snapshot"], self.root)
+        self.assertEqual(original.read_bytes(), b"important")
+        self.assertFalse(Path(entry["destination"]).exists())
+
+    def test_cancel_during_copy_preserves_original(self):
+        import errno
+        original = self.write("file.txt", b"important" * 200000)
+        entry = self.plan()[0]
+        event = threading.Event()
+        real_fsync = os.fsync
+
+        def cancel_after_flush(fd):
+            real_fsync(fd)
+            event.set()
+
+        with patch("organiser_core.os.link", side_effect=OSError(errno.EXDEV, "cross-device")), \
+             patch("organiser_core.os.fsync", side_effect=cancel_after_flush):
+            with self.assertRaises(core.Cancelled):
+                core.move_exclusive(original, entry["destination"], entry["snapshot"], self.root, event)
+        self.assertEqual(original.read_bytes(), b"important" * 200000)
+        self.assertFalse(Path(entry["destination"]).exists())
+
+    def test_unwritable_history_blocks_moves(self):
+        original = self.write("file.txt", b"important")
+        entry = self.plan()[0]
+        with patch("organiser_core.save_history", side_effect=OSError("read-only history")):
+            result = core.organise([entry], self.root, history_path=self.history)
+        self.assertTrue(result["history_error"])
+        self.assertEqual(result["moved"], 0)
+        self.assertEqual(original.read_bytes(), b"important")
+
+    def test_history_failure_stops_after_first_move_and_reports_it(self):
+        self.write("a.txt", b"a")
+        untouched = self.write("b.txt", b"b")
+        plan = self.plan()
+        real_save = core.save_history
+        logs = []
+
+        def fail_new_history(history, path):
+            if history["moves"]:
+                raise OSError("disk full")
+            real_save(history, path)
+
+        with patch("organiser_core.save_history", side_effect=fail_new_history):
+            result = core.organise(plan, self.root, logger=logs.append, history_path=self.history)
+        self.assertTrue(result["history_error"])
+        self.assertEqual(result["moved"], 1)
+        self.assertEqual(result["errors"], 1)
+        self.assertEqual(Path(plan[0]["destination"]).read_bytes(), b"a")
+        self.assertTrue(untouched.exists())
+        self.assertTrue(any("HISTORY ERROR" in line and plan[0]["destination"] in line for line in logs))
+
+    def test_prior_history_is_preserved_until_first_successful_move(self):
+        original = self.write("first.txt", b"first")
+        core.organise(self.plan(), self.root, history_path=self.history)
+        previous = core.load_history(self.history)
+        self.write("second.txt", b"second")
+        plan = [p for p in self.plan() if Path(p["source"]).name == "second.txt"]
+
+        def inspect_then_fail(*args, **kwargs):
+            self.assertEqual(core.load_history(self.history), previous)
+            raise core.FileChangedError("changed during move")
+
+        with patch("organiser_core.move_exclusive", side_effect=inspect_then_fail):
+            report = core.organise(plan, self.root, history_path=self.history)
+        self.assertEqual(report["moved"], 0)
+        self.assertEqual(core.load_history(self.history), previous)
+        self.assertEqual(core.undo(self.history)["restored"], 1)
+        self.assertEqual(original.read_bytes(), b"first")
+
+    def test_unwritable_history_blocks_undo(self):
+        original = self.write("file.txt", b"important")
+        core.organise(self.plan(), self.root, history_path=self.history)
+        with patch("organiser_core.save_history", side_effect=OSError("read-only history")):
+            result = core.undo(self.history)
+        self.assertTrue(result["history_error"])
+        self.assertEqual(result["restored"], 0)
+        self.assertFalse(original.exists())
+
+    def test_undo_history_failure_counts_restored_file_and_stops(self):
+        self.write("a.txt", b"a")
+        self.write("b.txt", b"b")
+        core.organise(self.plan(), self.root, history_path=self.history)
+        real_save = core.save_history
+
+        def fail_updated_history(history, path):
+            if len(history["moves"]) < 2:
+                raise OSError("disk full")
+            real_save(history, path)
+
+        with patch("organiser_core.save_history", side_effect=fail_updated_history):
+            result = core.undo(self.history)
+        self.assertTrue(result["history_error"])
+        self.assertEqual(result["restored"], 1)
+        self.assertEqual(result["errors"], 1)
+        self.assertTrue((self.root / "b.txt").exists())
+        self.assertFalse((self.root / "a.txt").exists())
+
+    def test_parent_traversal_cannot_escape_selected_root(self):
+        with self.assertRaises(ValueError):
+            core.safe_ancestors(self.root, self.root / ".." / "outside", create=True)
+
+    def test_many_name_collisions_use_unique_destinations(self):
+        self.settings["recursive"] = True
+        for index in range(100):
+            self.write(f"folder{index:03}/same.txt", str(index).encode())
+        plan = self.plan()
+        self.assertEqual(len(plan), 100)
+        self.assertEqual(len({p["destination"].casefold() for p in plan}), 100)
+        self.assertTrue(any(Path(p["destination"]).name == "same_99.txt" for p in plan))
 
 
 if __name__ == "__main__":

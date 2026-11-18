@@ -1,4 +1,4 @@
-"""Filesystem engine for File Organiser Pro 1.1 (no GUI dependencies).
+"""Filesystem engine for File Organiser Pro 1.1.1 (no GUI dependencies).
 
 No automatic deletion, no replacement of existing destination paths.
 The scan and plan are advisory; every move is validated again at execution.
@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 APP_NAME = "File Organiser Pro"
+APP_VERSION = "1.1.1"
 CONFIG_FILE = Path.home() / ".file_organiser_pro.json"
 HISTORY_FILE = Path.home() / ".file_organiser_pro_history.json"
 
@@ -393,6 +394,8 @@ def lexists(path: Path) -> bool:
 def safe_ancestors(root: Path, directory: Path, create: bool = False) -> None:
     """Reject symlink/junction ancestors, including output/category folders."""
     rel = directory.relative_to(root)
+    if ".." in rel.parts:
+        raise ValueError(f"Path escapes the selected root: {directory}")
     if root.is_symlink() or is_junction(root) or not root.is_dir():
         raise ValueError(f"Root directory is no longer safe: {root}")
     check = root
@@ -416,6 +419,7 @@ def build_plan(records: list[dict], folder: str | Path, settings: dict,
     output = get_output(root, settings)
     validate_filters(settings)
     reserved = set()
+    next_suffix = {}
     plan = []
     category_map = categories_for(settings) if settings.get("organisation_mode") == "Category" else None
     for record in records:
@@ -432,10 +436,12 @@ def build_plan(records: list[dict], folder: str | Path, settings: dict,
             parent = output.joinpath(*category.split("/"))
             safe_ancestors(root, parent, create=False)
             destination = parent / source.name
-            index = 1
+            collision_key = str(destination).casefold()
+            index = next_suffix.get(collision_key, 1)
             while lexists(destination) or os.path.normcase(str(destination)).casefold() in reserved:
                 destination = parent / f"{source.stem}_{index}{source.suffix}"
                 index += 1
+            next_suffix[collision_key] = index
             reserved.add(os.path.normcase(str(destination)).casefold())
             plan.append({"source": str(source), "destination": str(destination), "category": category,
                          "snapshot": snap, "size": snap["size"], "selected": True})
@@ -451,7 +457,7 @@ def _check_source(source: Path, expected: dict, root: Path) -> None:
 
 
 def _exclusive_copy_and_unlink(source: Path, dest: Path, expected: dict,
-                               root: Path, cancel=None) -> None:
+                               root: Path, cancel=None) -> dict:
     """Cross-device fallback, with O_EXCL and a checked source descriptor."""
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     source_fd = os.open(source, flags)
@@ -486,7 +492,17 @@ def _exclusive_copy_and_unlink(source: Path, dest: Path, expected: dict,
             shutil.copystat(source, dest, follow_symlinks=False)
             cancelled(cancel)
             _check_source(source, expected, root)
-            source.unlink()
+            final_sig = signature(dest)
+            if (final_sig["dev"], final_sig["ino"]) != created_identity:
+                raise FileChangedError("Destination changed during copy")
+            if any(final_sig[key] != expected[key] for key in ("size", "mtime_ns")):
+                raise FileChangedError("Destination metadata differs from source")
+        # Windows will not unlink the source while our reader is still open.
+        # Complete every fallible validation before removing the original.
+        cancelled(cancel)
+        _check_source(source, expected, root)
+        safe_ancestors(root, dest.parent)
+        source.unlink()
     except BaseException:
         if dest_fd is not None:
             os.close(dest_fd)
@@ -500,6 +516,7 @@ def _exclusive_copy_and_unlink(source: Path, dest: Path, expected: dict,
             except OSError:
                 pass
         raise
+    return final_sig
 
 
 def move_exclusive(source: str | Path, destination: str | Path, expected: dict,
@@ -527,14 +544,14 @@ def move_exclusive(source: str | Path, destination: str | Path, expected: dict,
                                getattr(errno, "EOPNOTSUPP", errno.ENOTSUP), errno.ENOSYS}
             if isinstance(exc, OSError) and exc.errno not in fallback_errors:
                 raise
-            _exclusive_copy_and_unlink(source, destination, expected, root, cancel=cancel)
+            return _exclusive_copy_and_unlink(source, destination, expected, root, cancel=cancel)
         else:
             _check_source(source, expected, root)
-            if not signature_matches(expected, signature(destination)):
+            final_sig = signature(destination)
+            if not signature_matches(expected, final_sig):
                 raise FileChangedError("Destination changed during link creation")
             cancelled(cancel)
             source.unlink()
-        return signature(destination)
     except BaseException:
         if link_created and lexists(destination):
             try:
@@ -544,6 +561,9 @@ def move_exclusive(source: str | Path, destination: str | Path, expected: dict,
             except OSError:
                 pass
         raise
+    # No filesystem reads after unlink: an error here must never trigger
+    # cleanup of what is now the only remaining copy.
+    return final_sig
 
 
 def format_size(n: int) -> str:
@@ -576,8 +596,10 @@ def organise(plan: list[dict], root: str | Path, progress: Progress = None,
     previous_history = load_history(history_path)
     history = {"version": 1, "root": str(root), "timestamp": datetime.now().isoformat(timespec="seconds"), "moves": []}
     moved, errors, skipped = 0, 0, 0
-    history_started = False
+    history_checked = False
+    history_error = False
     total = len(selected)
+    processed = 0
     cancelled_early = False
     for index, item in enumerate(selected, 1):
         if cancel is not None and cancel.is_set():
@@ -587,20 +609,34 @@ def organise(plan: list[dict], root: str | Path, progress: Progress = None,
         if progress:
             progress(index - 1, total, source.name)
         try:
-            # Initialise the new history immediately before the first committed
-            # move. New operations supersede the previous single-level undo.
-            if not history_started:
-                save_history(history, history_path)
-                history_started = True
+            # Check journal access without discarding the previous operation.
+            if not history_checked:
+                try:
+                    save_history(previous_history, history_path)
+                except OSError as exc:
+                    history_error = True
+                    errors += 1
+                    emit(logger, f"HISTORY ERROR: No files moved; cannot write undo history: {exc}")
+                    break
+                history_checked = True
             final_sig = move_exclusive(source, dest, item["snapshot"], root, cancel=cancel)
             history["moves"].append({"source": str(source), "destination": str(dest), "snapshot": final_sig})
-            save_history(history, history_path)
             moved += 1
+            processed += 1
+            try:
+                save_history(history, history_path)
+            except OSError as exc:
+                history_error = True
+                errors += 1
+                emit(logger, f"HISTORY ERROR: Stopped after moving {source} -> {dest}. "
+                     f"This move was not saved for undo; keep this path for manual recovery. {exc}")
+                break
             emit(logger, f"MOVED: {source} -> {dest}")
         except Cancelled:
             cancelled_early = True
             break
         except (OSError, ValueError, shutil.Error) as exc:
+            processed += 1
             if isinstance(exc, (FileChangedError, FileExistsError, FileNotFoundError)):
                 skipped += 1
                 emit(logger, f"SKIPPED: {source}: {exc}")
@@ -609,13 +645,12 @@ def organise(plan: list[dict], root: str | Path, progress: Progress = None,
                 emit(logger, f"ERROR: {source}: {exc}")
         if progress:
             progress(index, total, source.name)
-    if history_started and not history["moves"]:
-        # Nothing actually moved: keep the prior operation undoable.
-        save_history(previous_history, history_path)
     if progress:
-        progress(moved + skipped + errors, total, "Stopped" if cancelled_early else "Complete")
+        progress(processed, total,
+                 "Stopped" if cancelled_early or history_error else "Complete")
     return {"moved": moved, "errors": errors, "skipped": skipped,
-            "cancelled": cancelled_early, "remaining": len(history["moves"])}
+            "cancelled": cancelled_early, "remaining": len(history["moves"]),
+            "history_error": history_error}
 
 
 def undo(history_path: Path = HISTORY_FILE, progress: Progress = None,
@@ -624,6 +659,14 @@ def undo(history_path: Path = HISTORY_FILE, progress: Progress = None,
     moves = list(reversed(history.get("moves", [])))
     restored = errors = skipped = 0
     cancelled_early = False
+    history_error = False
+    if moves:
+        try:
+            save_history(history, history_path)
+        except OSError as exc:
+            emit(logger, f"HISTORY ERROR: No files restored; cannot write undo history: {exc}")
+            return {"restored": 0, "errors": 1, "skipped": 0, "cancelled": False,
+                    "remaining": len(moves), "history_error": True}
     for index, move in enumerate(moves, 1):
         if cancel is not None and cancel.is_set():
             cancelled_early = True
@@ -642,9 +685,16 @@ def undo(history_path: Path = HISTORY_FILE, progress: Progress = None,
             safe_ancestors(root, source.parent, create=True)
             move_exclusive(dest, source, move["snapshot"], root, cancel=cancel)
             history["moves"].remove(move)
-            save_history(history, history_path)
             restored += 1
             emit(logger, f"RESTORED: {source}")
+            try:
+                save_history(history, history_path)
+            except OSError as exc:
+                history_error = True
+                errors += 1
+                emit(logger, f"HISTORY ERROR: Stopped after restoring {source}; "
+                     f"the undo journal was not updated. {exc}")
+                break
         except Cancelled:
             cancelled_early = True
             break
@@ -658,7 +708,8 @@ def undo(history_path: Path = HISTORY_FILE, progress: Progress = None,
         if progress:
             progress(index, len(moves), dest.name)
     return {"restored": restored, "errors": errors, "skipped": skipped,
-            "cancelled": cancelled_early, "remaining": len(history["moves"])}
+            "cancelled": cancelled_early, "remaining": len(history["moves"]),
+            "history_error": history_error}
 
 
 def history_root_for(destination: Path, source: Path) -> Path:

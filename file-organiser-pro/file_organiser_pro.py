@@ -1,4 +1,4 @@
-"""File Organiser Pro 1.1 — local-only Tkinter desktop interface.
+"""File Organiser Pro 1.1.1 — local-only Tkinter desktop interface.
 
 Run: python file_organiser_pro.py
 Standard library only. Python 3.10+ recommended.
@@ -12,6 +12,7 @@ import platform
 import queue
 import subprocess
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +24,7 @@ import organiser_core as core
 class FileOrganiser:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title(f"{core.APP_NAME} 1.1")
+        root.title(f"{core.APP_NAME} {core.APP_VERSION}")
         root.geometry("1180x845")
         root.minsize(930, 680)
         self.settings = core.load_settings()
@@ -51,6 +52,10 @@ class FileOrganiser:
         self.job_name = ""
         self.events = queue.Queue()
         self.cancel_event = None
+        self.worker = None
+        self.job_finished = True
+        self.close_requested = False
+        self.render_generation = 0
         self.action_buttons = []
         self.editable_widgets = []
         self.style = ttk.Style()
@@ -111,7 +116,7 @@ class FileOrganiser:
         header = ttk.Frame(self.root, padding=(18, 12))
         header.pack(fill="x")
         ttk.Label(header, text="FILE ORGANISER PRO", style="Title.TLabel").pack(side="left")
-        ttk.Label(header, text="v1.1   •   local-first / preview-first", style="Sub.TLabel").pack(side="left", padx=16)
+        ttk.Label(header, text=f"v{core.APP_VERSION}   •   local-first / preview-first", style="Sub.TLabel").pack(side="left", padx=16)
         ttk.Label(header, text="Theme:").pack(side="right", padx=(5, 0))
         theme = ttk.Combobox(header, textvariable=self.theme_var, values=["Dark", "Light"], state="readonly", width=7)
         theme.pack(side="right")
@@ -291,6 +296,7 @@ class FileOrganiser:
         self.tree.tag_configure("excluded", foreground="#8a929d" if dark else "#8b9198")
 
     def invalidate_plan(self, *_):
+        self.render_generation += 1
         self.preview_context = None
         if not self.planned_moves:
             return
@@ -369,6 +375,7 @@ class FileOrganiser:
         dialog.title("Custom Categories")
         dialog.geometry("540x430")
         dialog.transient(self.root)
+        dialog.grab_set()
         ttk.Label(dialog, text="One category per line: Category: .ext, .ext").pack(pady=10)
         editor = tk.Text(dialog, font=("Consolas", 10), height=14)
         editor.pack(fill="both", expand=True, padx=12)
@@ -414,6 +421,7 @@ class FileOrganiser:
         if self.busy:
             return
         self.cancel_event = threading.Event()
+        self.job_finished = False
         self.job_name = name
         self.set_busy(True)
         self.progress.configure(mode="indeterminate" if name in ("scan", "preview", "duplicates") else "determinate",
@@ -424,8 +432,14 @@ class FileOrganiser:
         self.progress_text.configure(text="Starting…")
 
         def worker():
+            last_report = 0.0
+
             def report(current, total, filename):
-                self.events.put(("progress", current, total, filename))
+                nonlocal last_report
+                now = time.monotonic()
+                if now - last_report >= 0.05 or current == total:
+                    self.events.put(("progress", current, total, filename))
+                    last_report = now
 
             def write_log(line):
                 self.events.put(("log", line))
@@ -438,7 +452,8 @@ class FileOrganiser:
             except Exception as exc:
                 self.events.put(("done", name, None, str(exc)))
 
-        threading.Thread(target=worker, name=f"FileOrganiser-{name}", daemon=True).start()
+        self.worker = threading.Thread(target=worker, name=f"FileOrganiser-{name}", daemon=False)
+        self.worker.start()
 
     def cancel_job(self):
         if self.busy and self.cancel_event:
@@ -448,7 +463,11 @@ class FileOrganiser:
 
     def poll_events(self):
         try:
-            while True:
+            # Yield to Tk regularly even when a large operation fills the queue.
+            deadline = time.monotonic() + 0.015
+            for _ in range(200):
+                if time.monotonic() >= deadline:
+                    break
                 event = self.events.get_nowait()
                 if event[0] == "log":
                     self.log(event[1])
@@ -464,11 +483,15 @@ class FileOrganiser:
                         self.progress_text.configure(text=f"Scanned {current} entries  •  {filename}")
                 elif event[0] == "done":
                     _, name, result, error = event
+                    self.job_finished = True
                     self.progress.stop()
                     self.set_busy(False)
                     self.on_job_done(name, result, error)
         except queue.Empty:
             pass
+        if self.close_requested and self.job_finished and not (self.worker and self.worker.is_alive()):
+            self.finish_close()
+            return
         try:
             self.root.after(80, self.poll_events)
         except tk.TclError:
@@ -480,6 +503,15 @@ class FileOrganiser:
             self.log(f"JOB: {name}: {error}")
             if error != "Cancelled":
                 messagebox.showerror(f"{name.capitalize()} Failed", error)
+            return
+        if isinstance(result, dict) and result.get("history_error"):
+            messagebox.showwarning("Undo History Could Not Be Saved",
+                "The operation stopped because undo history could not be saved.\n\n"
+                "Completed moves are included in the activity log. Export that log "
+                "before closing; the last move may need to be restored manually.")
+            # Keep the app open so the recovery paths can be exported.
+            self.close_requested = False
+        if self.close_requested:
             return
         if name == "scan":
             self.scanned_files = result
@@ -507,7 +539,10 @@ class FileOrganiser:
                                         + ("  •  cancelled" if result["cancelled"] else ""))
             self.log(f"RESULT: {self.summary.cget('text')}")
             self.update_undo_button()
-        self.progress_text.configure(text="Finished" if not result or not isinstance(result, dict) or not result.get("cancelled") else "Stopped safely")
+        if isinstance(result, dict) and result.get("history_error"):
+            self.progress_text.configure(text="Stopped: undo history could not be saved. See Activity Log.")
+        elif name != "preview":
+            self.progress_text.configure(text="Stopped safely" if isinstance(result, dict) and result.get("cancelled") else "Finished")
 
     def scan_folder(self):
         try:
@@ -537,12 +572,31 @@ class FileOrganiser:
         self.start_job("preview", run)
 
     def populate_preview(self):
+        self.render_generation += 1
+        generation = self.render_generation
         self.clear_tree(self.tree)
-        for index, item in enumerate(self.planned_moves):
-            self.tree.insert("", "end", iid=f"p{index}", values=("✓" if item["selected"] else "–",
-                Path(item["source"]).name, item["category"], item["destination"], core.format_size(item["size"])),
-                tags=() if item["selected"] else ("excluded",))
-        self.refresh_selection_summary()
+        self.set_busy(True)
+        self.cancel_btn.configure(state="disabled")
+
+        def insert_batch(start=0):
+            if generation != self.render_generation or self.close_requested:
+                self.set_busy(False)
+                return
+            stop = min(start + 200, len(self.planned_moves))
+            for index in range(start, stop):
+                item = self.planned_moves[index]
+                self.tree.insert("", "end", iid=f"p{index}", values=("✓" if item["selected"] else "–",
+                    Path(item["source"]).name, item["category"], item["destination"], core.format_size(item["size"])),
+                    tags=() if item["selected"] else ("excluded",))
+            if stop < len(self.planned_moves):
+                self.progress_text.configure(text=f"Loading preview: {stop} / {len(self.planned_moves)}")
+                self.root.after(1, lambda: insert_batch(stop))
+            else:
+                self.set_busy(False)
+                self.refresh_selection_summary()
+                self.progress_text.configure(text="Preview ready")
+
+        insert_batch()
 
     def refresh_selection_summary(self):
         included = [p for p in self.planned_moves if p["selected"]]
@@ -646,10 +700,18 @@ class FileOrganiser:
         self.log(f"DUPLICATES: {len(groups)} SHA-256 match groups found; no files deleted.")
 
     def on_close(self):
+        if self.close_requested:
+            return
         if self.busy and self.cancel_event:
-            if not messagebox.askyesno("Operation Running", "An operation is running. Request cancellation and close the app?"):
+            if not messagebox.askyesno("Operation Running", "Cancel the operation and close once file work and undo history have finished?"):
                 return
-            self.cancel_event.set()
+            self.close_requested = True
+            self.cancel_job()
+            self.progress_text.configure(text="Closing after the current operation stops safely…")
+            return
+        self.finish_close()
+
+    def finish_close(self):
         self.save_settings()
         self.root.destroy()
 
