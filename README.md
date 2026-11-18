@@ -2,7 +2,7 @@
 
 A little desktop app for sorting messy downloads, photos, videos and backup exports. It puts sorted **copies** in a **Files Sorted** folder and leaves your originals where they are.
 
-**v1.2 public beta** — still being worked on. Try a small folder first and let me know how it goes.
+**v1.2.0-beta.2 Windows beta** — still being worked on. Try a small folder first and let me know how it goes.
 
 [Download the beta](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.2) · [App instructions](file-organiser-pro/) · [Source code](file-organiser-pro/file_organiser_pro.py) · [Report a bug](https://github.com/GackedPeach/folder-tidy/issues/new?template=bug_report.yml)
 
@@ -10,12 +10,14 @@ A little desktop app for sorting messy downloads, photos, videos and backup expo
 
 No Python installation needed for these downloads.
 
+The preview fix is in the Windows beta.2 download. Mac and Linux links below are the older beta.1 builds, which still have the Advanced options preview bug.
+
 | Your computer | Download |
 | --- | --- |
 | Windows 10/11, 64-bit | [Windows .exe](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.2/FileOrganiserPro-v1.2.0-beta.2-windows-x64.exe) |
-| Apple Silicon Mac (M1 or newer), macOS 15+ | [Mac — Apple Silicon](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.2/FileOrganiserPro-v1.2.0-beta.2-macos-arm64.dmg) |
-| Intel Mac, macOS 15+ | [Mac — Intel](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.2/FileOrganiserPro-v1.2.0-beta.2-macos-x64.dmg) |
-| Linux 64-bit, glibc 2.35+ (Ubuntu 22.04+ and compatible) | [Linux archive](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.2/FileOrganiserPro-v1.2.0-beta.2-linux-x64.tar.gz) |
+| Apple Silicon Mac (M1 or newer), macOS 15+ | [Previous beta — Mac — Apple Silicon](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-macos-arm64.dmg) |
+| Intel Mac, macOS 15+ | [Previous beta — Mac — Intel](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-macos-x64.dmg) |
+| Linux 64-bit, glibc 2.35+ (Ubuntu 22.04+ and compatible) | [Previous beta — Linux archive](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-linux-x64.tar.gz) |
 
 **Windows:** open the `.exe`. **Mac:** open the `.dmg` and drag the app to Applications. **Linux:** extract the whole archive, then open `FileOrganiserPro`; keep its `_internal` folder alongside it. Linux needs an X11/XWayland desktop.
 

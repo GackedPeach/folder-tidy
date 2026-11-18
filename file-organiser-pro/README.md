@@ -9,7 +9,9 @@ This is a public beta of an early-development personal utility.
 
 ## Download the app
 
-**[Get the Windows, Mac or Linux beta download](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.2)**
+**[Get the fixed Windows beta.2 download](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.2)**
+
+This release is a Windows hotfix. [Older Mac and Linux beta downloads](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.1) are still available, but those older builds have the Advanced options preview bug.
 
 Packaged downloads include Python and Tkinter; no Python installation is
 needed. Windows has a standalone `.exe`, Mac has separate Apple Silicon and

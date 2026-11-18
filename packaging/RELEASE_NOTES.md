@@ -1,35 +1,23 @@
-## File Organiser Pro 1.2.0-beta.2
+## File Organiser Pro 1.2.0-beta.2 — Windows preview fix
 
-Small fix for a frustrating one: opening and closing Advanced options could leave the app stuck when you clicked Preview files. That's fixed, with a regression check in both the GUI tests and packaged app check.
+Small fix for a frustrating one: opening and closing **Advanced options** could leave the controls stuck when you clicked **Preview files**. That's fixed.
 
-The app now shows the full results-folder path, and scan/preview statuses make it clear that no files have been copied yet. Use **Organise copies** after reviewing the preview to create the output.
+### What's changed
 
-Ready-to-run downloads are attached below. **You do not need Python.**
+- Preview works after closing Advanced options, including after opening it more than once.
+- The full results-folder path is shown in the app.
+- Scan and preview messages now make it clear that no files have been copied yet.
 
-| Your computer | Download |
-| --- | --- |
-| Windows 10/11, 64-bit | `FileOrganiserPro-v1.2.0-beta.2-windows-x64.exe` |
-| Mac with Apple Silicon (M1 or newer), macOS 15+ | `FileOrganiserPro-v1.2.0-beta.2-macos-arm64.dmg` |
-| Intel Mac, macOS 15+ | `FileOrganiserPro-v1.2.0-beta.2-macos-x64.dmg` |
-| Linux, 64-bit, glibc 2.35+ (Ubuntu 22.04+ and compatible) | `FileOrganiserPro-v1.2.0-beta.2-linux-x64.tar.gz` |
+### Download for Windows
 
-**Windows:** download and open the `.exe`.
-**Mac:** open the `.dmg`, drag the app to Applications, then open it.
-**Linux:** extract the whole archive, then open `FileOrganiserPro` inside it. Keep the `_internal` folder alongside the executable. A graphical X11/XWayland desktop is required.
+Download **FileOrganiserPro-v1.2.0-beta.2-windows-x64.exe** from the assets below and open it. Windows 10/11, 64-bit. No Python installation needed.
 
-These are unsigned community beta builds. Windows/macOS may require manual approval on first launch; the Mac apps are not Apple-notarised. SHA-256 checksums are attached in `SHA256SUMS.txt`.
+Choose a folder, click **Preview files**, review the list, then click **Organise copies**. Copies go into **Files Sorted** inside your chosen folder. Your originals stay in place.
 
-### The big update
+This is still an unsigned beta, so start with a small sample. Windows may ask for approval on first launch. A SHA-256 checksum is attached.
 
-- **Copies only:** organise into **Files Sorted**, keeping every original in place.
-- Group by file type, extension, modified date, creation date, or size.
-- Date layouts support year, month and day folders. Dates use filesystem timestamps; photo capture metadata and Google Takeout sidecars are not interpreted.
-- Preview destinations, include/exclude individual files, and use advanced filters.
-- Independent, verified copies with no replacement of existing files.
-- Saved reports, safe cancellation, read-only duplicate detection, and a refreshed dark/light interface.
+This is a Windows hotfix. Mac and Linux packages aren't included in this release. [Their previous beta downloads](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.1) remain available; those older builds still have the preview bug.
 
-Start with a small sample while beta testing. This is a work in progress, and feedback is welcome.
+Checked with the Windows GUI tests and a packaged scan → close options → preview → copy test. A regression test reproduces the old failure and passes with the fix.
 
-[Report a bug](https://github.com/GackedPeach/folder-tidy/issues/new?template=bug_report.yml) · [Read the instructions](https://github.com/GackedPeach/folder-tidy/tree/main/file-organiser-pro) · [Browse the source](https://github.com/GackedPeach/folder-tidy)
-
-The automatically generated **Source code** archives are for people who want to inspect or modify the code. For normal use, choose one of the app downloads above.
+[Report a bug](https://github.com/GackedPeach/folder-tidy/issues/new?template=bug_report.yml) · [Read the instructions](https://github.com/GackedPeach/folder-tidy/tree/main/file-organiser-pro)
