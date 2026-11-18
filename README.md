@@ -5,17 +5,19 @@ A small Python script that sorts loose files into folders like `Images`,
 
 It previews changes first. Nothing moves until you add `--apply`.
 
-## Desktop app & progress
+## Copy-only desktop app
 
 This repo also includes **[File Organiser Pro](file-organiser-pro/)**, a desktop
 app built with Python and Tkinter.
 
-It's at **v1.1, in early development**, with move previews, filters, undo, and
-duplicate detection. The next focus is reliability with large folders,
-usability, and complex backup exports. See its [README](file-organiser-pro/README.md)
-for setup, features, and limitations.
+**File Organiser Pro v1.2** creates independent copies in a **Files Sorted**
+folder and keeps originals in place. Group by file type, extension, modified
+date, creation date, or size. Dates can use year, month, or day folders.
+It includes previews, filters, duplicate detection, copy verification, and a
+saved report. See its [README](file-organiser-pro/README.md) for setup and limits.
 
-The instructions below are for the original Folder Tidy script.
+The instructions below are for the original Folder Tidy command-line script,
+which **moves files**. Use the desktop app above for copy-only organisation.
 
 ## Run it
 

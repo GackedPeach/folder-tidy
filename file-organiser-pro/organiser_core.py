@@ -1,12 +1,11 @@
-"""Filesystem engine for File Organiser Pro 1.1.1 (no GUI dependencies).
+"""Copy-only filesystem engine for File Organiser Pro 1.2.
 
 No automatic deletion, no replacement of existing destination paths.
-The scan and plan are advisory; every move is validated again at execution.
+The scan and plan are advisory; every copy is validated again at execution.
 """
 from __future__ import annotations
 
 import copy
-import errno
 import fnmatch
 import hashlib
 import json
@@ -22,13 +21,13 @@ from pathlib import Path
 from typing import Callable, Optional
 
 APP_NAME = "File Organiser Pro"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.2.0"
 CONFIG_FILE = Path.home() / ".file_organiser_pro.json"
-HISTORY_FILE = Path.home() / ".file_organiser_pro_history.json"
+HISTORY_FILE = Path.home() / ".file_organiser_pro_last_run.json"
 
 DEFAULT_CATEGORIES = {
-    "Images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff", ".tif", ".ico", ".heic", ".raw"],
-    "Videos": [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".mpeg", ".mpg", ".m4v", ".3gp"],
+    "Images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff", ".tif", ".ico", ".heic", ".heif", ".avif", ".raw", ".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"],
+    "Videos": [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".mpeg", ".mpg", ".m4v", ".3gp", ".3g2", ".mts", ".m2ts", ".mxf", ".vob", ".ogv"],
     "Audio": [".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".wma", ".aiff", ".opus"],
     "Documents": [".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".pages", ".md", ".epub"],
     "Spreadsheets": [".xls", ".xlsx", ".csv", ".ods", ".tsv"],
@@ -44,9 +43,9 @@ DEFAULT_CATEGORIES = {
 
 # All keys used in older releases remain valid. New keys are additive.
 DEFAULT_SETTINGS = {
-    "recursive": False,
+    "recursive": True,
     "skip_hidden": True,
-    "output_folder": "Organised",
+    "output_folder": "Files Sorted",
     "ignore_patterns": [".tmp", ".temp", ".part", ".crdownload", "desktop.ini", "Thumbs.db", ".DS_Store"],
     "custom_categories": {},
     "ignored_extensions": [],
@@ -58,8 +57,12 @@ DEFAULT_SETTINGS = {
     "min_size": "",
     "max_size": "",
     "theme": "Dark",
+    "date_granularity": "Month",
 }
 MODES = ["Category", "Extension", "Date Modified", "Date Created", "File Size"]
+MODE_LABELS = {"Category": "File type", "Extension": "File extension",
+               "Date Modified": "Date modified", "Date Created": "Date created", "File Size": "File size"}
+DATE_GROUPS = ["Year", "Month", "Day"]
 
 Progress = Optional[Callable[[int, Optional[int], str], None]]
 Logger = Optional[Callable[[str], None]]
@@ -109,6 +112,10 @@ def load_settings(path: Path = CONFIG_FILE) -> dict:
         settings["organisation_mode"] = "Category"
     if settings.get("theme") not in ("Dark", "Light"):
         settings["theme"] = "Dark"
+    if settings.get("date_granularity") not in DATE_GROUPS:
+        settings["date_granularity"] = "Month"
+    if settings.get("output_folder") == "Organised":
+        settings["output_folder"] = "Files Sorted"
     return settings
 
 
@@ -228,6 +235,8 @@ def validate_filters(settings: dict):
         raise ValueError("Minimum file size cannot exceed maximum file size.")
     if settings.get("organisation_mode") not in MODES:
         raise ValueError("Unknown organisation method.")
+    if settings.get("date_granularity", "Month") not in DATE_GROUPS:
+        raise ValueError("Choose Year, Month or Day for date grouping.")
     return min_size, max_size
 
 
@@ -242,7 +251,11 @@ def signature(path: Path) -> dict:
     st = path.lstat()
     if not stat.S_ISREG(st.st_mode):
         raise FileChangedError(f"Not a regular file: {path}")
-    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "dev": st.st_dev, "ino": st.st_ino}
+    created_ns = getattr(st, "st_birthtime_ns", None)
+    if created_ns is None and sys.platform == "win32":
+        created_ns = st.st_ctime_ns
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "dev": st.st_dev, "ino": st.st_ino,
+            "created_ns": created_ns}
 
 
 def signature_matches(expected: dict, actual: dict) -> bool:
@@ -363,18 +376,16 @@ def category_for(path: Path, settings: dict, snapshot: dict, category_map: Optio
     if mode == "Extension":
         return path.suffix.lower().lstrip(".").upper() or "No Extension"
     if mode in ("Date Modified", "Date Created"):
-        stat_info = path.stat()
-        if mode == "Date Modified":
-            when = stat_info.st_mtime
-        elif hasattr(stat_info, "st_birthtime"):
-            when = stat_info.st_birthtime
-        elif sys.platform == "win32":
-            when = stat_info.st_ctime
-        else:
-            # Linux often has no portable birth time; mtime is the honest fallback.
-            when = stat_info.st_mtime
-        date = datetime.fromtimestamp(when)
-        return f"{date.year}/{date:%m - %B}"
+        # Use the scanned timestamps so a preview has a consistent date basis.
+        when = snapshot.get("created_ns") if mode == "Date Created" else None
+        date = datetime.fromtimestamp((when if when is not None else snapshot["mtime_ns"]) / 1e9)
+        parts = [f"{date.year}"]
+        granularity = settings.get("date_granularity", "Month")
+        if granularity in ("Month", "Day"):
+            parts.append(date.strftime("%m - %B"))
+        if granularity == "Day":
+            parts.append(date.strftime("%d"))
+        return "/".join(parts)
     if mode == "File Size":
         size = snapshot["size"]
         if size < 1024**2:
@@ -456,272 +467,197 @@ def _check_source(source: Path, expected: dict, root: Path) -> None:
         raise FileChangedError(f"Source changed since preview: {source}")
 
 
-def _exclusive_copy_and_unlink(source: Path, dest: Path, expected: dict,
-                               root: Path, cancel=None) -> dict:
-    """Cross-device fallback, with O_EXCL and a checked source descriptor."""
+def copy_exclusive(source: str | Path, destination: str | Path, expected: dict,
+                   root: str | Path, cancel=None) -> dict:
+    """Create an independent, verified copy. Never link, move or delete a source."""
+    source, destination, root = Path(source), Path(destination), Path(root)
+    cancelled(cancel)
+    _check_source(source, expected, root)
+    safe_ancestors(root, destination.parent, create=True)
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    source_fd = os.open(source, flags)
-    dest_fd = None
-    created_identity = None
+    identity = None
     try:
-        with os.fdopen(source_fd, "rb") as reader:
-            source_fd = None
+        with os.fdopen(os.open(source, flags), "rb") as reader:
             st = os.fstat(reader.fileno())
-            if not stat.S_ISREG(st.st_mode) or not signature_matches(expected, {
-                "size": st.st_size, "mtime_ns": st.st_mtime_ns, "dev": st.st_dev, "ino": st.st_ino
-            }):
+            opened = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "dev": st.st_dev, "ino": st.st_ino}
+            if not stat.S_ISREG(st.st_mode) or not signature_matches(expected, opened):
                 raise FileChangedError("Source changed before copy")
-            dest_fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
-            created_stat = os.fstat(dest_fd)
-            created_identity = (created_stat.st_dev, created_stat.st_ino)
+            dest_fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                              getattr(os, "O_BINARY", 0), 0o600)
             with os.fdopen(dest_fd, "wb") as writer:
-                dest_fd = None
+                created = os.fstat(writer.fileno())
+                identity = (created.st_dev, created.st_ino)
+                digest = hashlib.sha256()
+                copied = 0
                 while True:
                     cancelled(cancel)
                     chunk = reader.read(1024 * 1024)
                     if not chunk:
                         break
                     writer.write(chunk)
+                    digest.update(chunk)
+                    copied += len(chunk)
                 writer.flush()
                 os.fsync(writer.fileno())
             st = os.fstat(reader.fileno())
             after = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "dev": st.st_dev, "ino": st.st_ino}
-            if not signature_matches(expected, after):
+            if copied != expected["size"] or not signature_matches(expected, after):
                 raise FileChangedError("Source changed during copy")
-            _check_source(source, expected, root)
-            shutil.copystat(source, dest, follow_symlinks=False)
-            cancelled(cancel)
-            _check_source(source, expected, root)
-            final_sig = signature(dest)
-            if (final_sig["dev"], final_sig["ino"]) != created_identity:
-                raise FileChangedError("Destination changed during copy")
-            if any(final_sig[key] != expected[key] for key in ("size", "mtime_ns")):
-                raise FileChangedError("Destination metadata differs from source")
-        # Windows will not unlink the source while our reader is still open.
-        # Complete every fallible validation before removing the original.
-        cancelled(cancel)
         _check_source(source, expected, root)
-        safe_ancestors(root, dest.parent)
-        source.unlink()
+        safe_ancestors(root, destination.parent)
+        copied_sig = signature(destination)
+        if (copied_sig["dev"], copied_sig["ino"]) != identity:
+            raise FileChangedError("Destination changed during copy")
+        checksum = digest.hexdigest()
+        if sha256_file(destination, copied_sig, cancel) != checksum:
+            raise OSError("Copy verification failed; the original is unchanged")
+        _check_source(source, expected, root)
+        cancelled(cancel)
+        shutil.copystat(source, destination, follow_symlinks=False)
+        _check_source(source, expected, root)
+        final_sig = signature(destination)
+        if (final_sig["dev"], final_sig["ino"]) != identity:
+            raise FileChangedError("Destination changed during verification")
+        return {**final_sig, "sha256": checksum}
     except BaseException:
-        if dest_fd is not None:
-            os.close(dest_fd)
-        if source_fd is not None:
-            os.close(source_fd)
-        if created_identity and lexists(dest):
+        # Only remove the newly created output if it is still our own file.
+        # Neither the source nor any pre-existing destination is ever removed.
+        if identity:
             try:
-                st = dest.lstat()
-                if (st.st_dev, st.st_ino) == created_identity:
-                    dest.unlink()
-            except OSError:
-                pass
-        raise
-    return final_sig
-
-
-def move_exclusive(source: str | Path, destination: str | Path, expected: dict,
-                   root: str | Path, cancel=None) -> dict:
-    """Move one regular file, never replacing a destination.
-
-    Same-volume hard-link+unlink avoids clobbering on POSIX (where os.rename
-    would overwrite). Cross-volume copy uses O_EXCL. Active external writers
-    can still race a move; metadata is checked immediately before/after.
-    """
-    source, destination, root = Path(source), Path(destination), Path(root)
-    cancelled(cancel)
-    _check_source(source, expected, root)
-    safe_ancestors(root, destination.parent, create=True)
-    if lexists(destination):
-        raise FileExistsError(f"Destination already exists: {destination}")
-    cancelled(cancel)
-    link_created = False
-    try:
-        try:
-            os.link(source, destination, follow_symlinks=False)
-            link_created = True
-        except (OSError, NotImplementedError) as exc:
-            fallback_errors = {errno.EXDEV, errno.EPERM, errno.EACCES, errno.ENOTSUP,
-                               getattr(errno, "EOPNOTSUPP", errno.ENOTSUP), errno.ENOSYS}
-            if isinstance(exc, OSError) and exc.errno not in fallback_errors:
-                raise
-            return _exclusive_copy_and_unlink(source, destination, expected, root, cancel=cancel)
-        else:
-            _check_source(source, expected, root)
-            final_sig = signature(destination)
-            if not signature_matches(expected, final_sig):
-                raise FileChangedError("Destination changed during link creation")
-            cancelled(cancel)
-            source.unlink()
-    except BaseException:
-        if link_created and lexists(destination):
-            try:
-                snap = signature(destination)
-                if snap["dev"] == expected["dev"] and snap["ino"] == expected["ino"]:
+                st = destination.lstat()
+                if (st.st_dev, st.st_ino) == identity:
+                    os.chmod(destination, stat.S_IREAD | stat.S_IWRITE)
                     destination.unlink()
             except OSError:
                 pass
         raise
-    # No filesystem reads after unlink: an error here must never trigger
-    # cleanup of what is now the only remaining copy.
-    return final_sig
 
 
 def format_size(n: int) -> str:
     size = float(n)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024 or unit == "TB":
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024 or unit == "TiB":
             return f"{size:.1f} {unit}"
         size /= 1024
-    return f"{size:.1f} TB"
+    return f"{size:.1f} TiB"
 
 
 def load_history(path: Path = HISTORY_FILE) -> dict:
+    """Read the last copy-session summary; legacy move journals are untouched."""
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
-        if isinstance(value, dict) and isinstance(value.get("moves"), list):
+        if isinstance(value, dict) and value.get("operation") == "copy":
             return value
     except (OSError, ValueError, UnicodeError):
         pass
-    return {"version": 1, "timestamp": "", "moves": []}
+    return {}
 
 
-def save_history(history: dict, path: Path = HISTORY_FILE) -> None:
-    save_json_atomic(path, history)
+def _open_report(output: Path):
+    stamp = datetime.now().strftime("%Y-%m-%d %H%M%S")
+    for number in range(1, 10001):
+        suffix = "" if number == 1 else f" ({number})"
+        path = output / f"Organisation report {stamp}{suffix}.txt"
+        try:
+            return path, path.open("x", encoding="utf-8", buffering=1)
+        except FileExistsError:
+            continue
+    raise OSError("Cannot allocate a new report filename")
 
 
 def organise(plan: list[dict], root: str | Path, progress: Progress = None,
-             logger: Logger = None, cancel=None, history_path: Path = HISTORY_FILE) -> dict:
-    selected = [p for p in plan if p.get("selected", True)]
+             logger: Logger = None, cancel=None, history_path: Path = HISTORY_FILE,
+             output: Optional[Path] = None) -> dict:
+    """Copy selected files and stream a report. Originals always remain in place."""
     root = get_root(root)
-    previous_history = load_history(history_path)
-    history = {"version": 1, "root": str(root), "timestamp": datetime.now().isoformat(timespec="seconds"), "moves": []}
-    moved, errors, skipped = 0, 0, 0
-    history_checked = False
-    history_error = False
-    total = len(selected)
+    output = Path(output) if output is not None else root / DEFAULT_SETTINGS["output_folder"]
+    if output.parent != root:
+        raise ValueError("The organised folder must be directly inside the selected folder")
+    validate_component(output.name)
+    safe_ancestors(root, output)
+    selected = [p for p in plan if p.get("selected", True)]
+    result = {"operation": "copy", "copied": 0, "errors": 0, "skipped": 0,
+              "cancelled": False, "report_error": False, "history_error": False,
+              "report": "", "output": str(output), "root": str(root),
+              "timestamp": datetime.now().isoformat(timespec="seconds"), "bytes_copied": 0}
+    if cancel is not None and cancel.is_set():
+        result["cancelled"] = True
+        return result
+    if not selected:
+        return result
+    required = sum(item["size"] for item in selected)
+    if shutil.disk_usage(root).free < required + 4096:
+        raise OSError(f"Not enough free space. Copies require at least {format_size(required)}.")
+    safe_ancestors(root, output, create=True)
+    report_path, report = _open_report(output)
+    result["report"] = str(report_path)
     processed = 0
-    cancelled_early = False
-    for index, item in enumerate(selected, 1):
-        if cancel is not None and cancel.is_set():
-            cancelled_early = True
-            break
-        source, dest = Path(item["source"]), Path(item["destination"])
-        if progress:
-            progress(index - 1, total, source.name)
-        try:
-            # Check journal access without discarding the previous operation.
-            if not history_checked:
-                try:
-                    save_history(previous_history, history_path)
-                except OSError as exc:
-                    history_error = True
-                    errors += 1
-                    emit(logger, f"HISTORY ERROR: No files moved; cannot write undo history: {exc}")
-                    break
-                history_checked = True
-            final_sig = move_exclusive(source, dest, item["snapshot"], root, cancel=cancel)
-            history["moves"].append({"source": str(source), "destination": str(dest), "snapshot": final_sig})
-            moved += 1
-            processed += 1
-            try:
-                save_history(history, history_path)
-            except OSError as exc:
-                history_error = True
-                errors += 1
-                emit(logger, f"HISTORY ERROR: Stopped after moving {source} -> {dest}. "
-                     f"This move was not saved for undo; keep this path for manual recovery. {exc}")
+    try:
+        report.write(f"File Organiser Pro {APP_VERSION} — copy report\n"
+                     f"Started: {result['timestamp']}\nSource: {root}\nOutput: {output}\n"
+                     "Original files are kept in their original locations.\n"
+                     "Each completed copy is verified with SHA-256.\n\n")
+        report.flush()
+        for index, item in enumerate(selected):
+            if cancel is not None and cancel.is_set():
+                result["cancelled"] = True
                 break
-            emit(logger, f"MOVED: {source} -> {dest}")
-        except Cancelled:
-            cancelled_early = True
-            break
-        except (OSError, ValueError, shutil.Error) as exc:
+            source, dest = Path(item["source"]), Path(item["destination"])
+            if progress:
+                progress(index, len(selected), source.name)
+            try:
+                # A forged/stale plan cannot write outside the output or copy
+                # the generated report back into its own output tree.
+                dest.relative_to(output)
+                if source.is_relative_to(output):
+                    raise ValueError("Source is inside the organised output")
+                copied_sig = copy_exclusive(source, dest, item["snapshot"], root, cancel)
+                result["copied"] += 1
+                result["bytes_copied"] += copied_sig["size"]
+                line = f"COPIED: {source} -> {dest} | SHA-256 {copied_sig['sha256']}"
+            except Cancelled:
+                result["cancelled"] = True
+                break
+            except (OSError, ValueError) as exc:
+                if isinstance(exc, (FileChangedError, FileExistsError, FileNotFoundError)):
+                    result["skipped"] += 1
+                    line = f"SKIPPED: {source} -> {dest}: {exc}"
+                else:
+                    result["errors"] += 1
+                    line = f"ERROR: {source} -> {dest}: {exc}"
             processed += 1
-            if isinstance(exc, (FileChangedError, FileExistsError, FileNotFoundError)):
-                skipped += 1
-                emit(logger, f"SKIPPED: {source}: {exc}")
-            else:
-                errors += 1
-                emit(logger, f"ERROR: {source}: {exc}")
-        if progress:
-            progress(index, total, source.name)
+            emit(logger, line)
+            try:
+                report.write(line + "\n")
+                report.flush()
+            except OSError as exc:
+                result["report_error"] = True
+                emit(logger, f"REPORT ERROR: Stopped because the report cannot be saved. {exc}")
+                break
+            if progress:
+                progress(processed, len(selected), source.name)
+        report.write(f"\nFinished: {datetime.now().isoformat(timespec='seconds')}\n"
+                     f"Copied: {result['copied']} | Skipped: {result['skipped']} | Errors: {result['errors']}\n"
+                     f"Cancelled: {result['cancelled']} | Original files kept in place.\n")
+        report.flush()
+        os.fsync(report.fileno())
+    except OSError as exc:
+        result["report_error"] = True
+        emit(logger, f"REPORT ERROR: {exc}; originals remain in place.")
+    finally:
+        try:
+            report.close()
+        except OSError:
+            result["report_error"] = True
+    try:
+        save_json_atomic(history_path, result)
+    except OSError as exc:
+        result["history_error"] = True
+        emit(logger, f"SESSION WARNING: Last-report shortcut could not be saved. Report: {report_path}. {exc}")
     if progress:
-        progress(processed, total,
-                 "Stopped" if cancelled_early or history_error else "Complete")
-    return {"moved": moved, "errors": errors, "skipped": skipped,
-            "cancelled": cancelled_early, "remaining": len(history["moves"]),
-            "history_error": history_error}
-
-
-def undo(history_path: Path = HISTORY_FILE, progress: Progress = None,
-         logger: Logger = None, cancel=None) -> dict:
-    history = load_history(history_path)
-    moves = list(reversed(history.get("moves", [])))
-    restored = errors = skipped = 0
-    cancelled_early = False
-    history_error = False
-    if moves:
-        try:
-            save_history(history, history_path)
-        except OSError as exc:
-            emit(logger, f"HISTORY ERROR: No files restored; cannot write undo history: {exc}")
-            return {"restored": 0, "errors": 1, "skipped": 0, "cancelled": False,
-                    "remaining": len(moves), "history_error": True}
-    for index, move in enumerate(moves, 1):
-        if cancel is not None and cancel.is_set():
-            cancelled_early = True
-            break
-        source = Path(move["source"])
-        dest = Path(move["destination"])
-        if progress:
-            progress(index - 1, len(moves), dest.name)
-        try:
-            # Validate the destination before undo, and do not overwrite anything
-            # that appeared in the original location after the move.
-            root = get_root(history.get("root") or history_root_for(dest, source))
-            _check_source(dest, move["snapshot"], root)
-            if lexists(source):
-                raise FileExistsError(f"Original path already exists: {source}")
-            safe_ancestors(root, source.parent, create=True)
-            move_exclusive(dest, source, move["snapshot"], root, cancel=cancel)
-            history["moves"].remove(move)
-            restored += 1
-            emit(logger, f"RESTORED: {source}")
-            try:
-                save_history(history, history_path)
-            except OSError as exc:
-                history_error = True
-                errors += 1
-                emit(logger, f"HISTORY ERROR: Stopped after restoring {source}; "
-                     f"the undo journal was not updated. {exc}")
-                break
-        except Cancelled:
-            cancelled_early = True
-            break
-        except (OSError, ValueError) as exc:
-            if isinstance(exc, (FileChangedError, FileExistsError, FileNotFoundError)):
-                skipped += 1
-                emit(logger, f"UNDO SKIPPED: {source}: {exc}")
-            else:
-                errors += 1
-                emit(logger, f"UNDO ERROR: {source}: {exc}")
-        if progress:
-            progress(index, len(moves), dest.name)
-    return {"restored": restored, "errors": errors, "skipped": skipped,
-            "cancelled": cancelled_early, "remaining": len(history["moves"]),
-            "history_error": history_error}
-
-
-def history_root_for(destination: Path, source: Path) -> Path:
-    """Infer common selected root from stored paths for backward compat.
-
-    The new journal always stores 'root'; this fallback exists only for older
-    journaling data that lacked it.
-    """
-    common = Path(os.path.commonpath([str(destination), str(source)]))
-    if not common.is_dir():
-        raise ValueError("Original parent directory is not available")
-    return common
+        progress(processed, len(selected), "Stopped" if result["cancelled"] or result["report_error"] else "Complete")
+    emit(logger, f"REPORT: {report_path}")
+    return result
 
 
 def sha256_file(path: Path, expected: dict, cancel=None) -> str:
