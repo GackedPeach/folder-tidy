@@ -1,543 +1,660 @@
-"""File Organiser Pro v1.0 — original Tkinter prototype, formatting restored."""
-import os
-import json
-import fnmatch
-import shutil
-import platform
-import subprocess
-import tkinter as tk
-from pathlib import Path
-from datetime import datetime
-from tkinter import ttk, filedialog, messagebox
+"""File Organiser Pro 1.1 — local-only Tkinter desktop interface.
 
-APP_NAME = "File Organiser Pro"
-CONFIG_FILE = Path.home() / ".file_organiser_pro.json"
-DEFAULT_CATEGORIES = {
-    "Images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff", ".tif", ".ico", ".heic", ".raw"],
-    "Videos": [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".mpeg", ".mpg", ".m4v", ".3gp"],
-    "Audio": [".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".wma", ".aiff", ".opus"],
-    "Documents": [".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".pages", ".md", ".epub"],
-    "Spreadsheets": [".xls", ".xlsx", ".csv", ".ods", ".tsv"],
-    "Presentations": [".ppt", ".pptx", ".odp", ".key"],
-    "Archives": [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"],
-    "Programs": [".exe", ".msi", ".dmg", ".pkg", ".deb", ".apk", ".appimage", ".bat", ".sh"],
-    "Code": [".py", ".java", ".cpp", ".c", ".h", ".html", ".css", ".js", ".ts", ".json", ".php", ".sql", ".xml", ".yml", ".yaml", ".go", ".rs", ".swift", ".ipynb"],
-    "Fonts": [".ttf", ".otf", ".woff", ".woff2"],
-    "3D Files": [".blend", ".obj", ".fbx", ".stl", ".gltf", ".glb", ".dae"],
-    "Design": [".psd", ".ai", ".eps", ".indd", ".xcf", ".fig", ".sketch"],
-    "Database": [".db", ".sqlite", ".sqlite3", ".mdb"]
-}
-DEFAULT_SETTINGS = {
-    "recursive": False,
-    "skip_hidden": True,
-    "output_folder": "Organised",
-    "ignore_patterns": [".tmp", ".temp", ".part", ".crdownload", "desktop.ini", "Thumbs.db", ".DS_Store"],
-    "custom_categories": {},
-    "ignored_extensions": [],
-    "organisation_mode": "Category"
-}
-MODES = ["Category", "Extension", "Date Modified", "Date Created", "File Size"]
+Run: python file_organiser_pro.py
+Standard library only. Python 3.10+ recommended.
+"""
+from __future__ import annotations
+
+import copy
+import csv
+import os
+import platform
+import queue
+import subprocess
+import threading
+import tkinter as tk
+from datetime import datetime
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+import organiser_core as core
 
 
 class FileOrganiser:
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title(APP_NAME)
-        self.root.geometry("1050x760")
-        self.root.minsize(800, 600)
-        self.settings = self.load_settings()
-        self.folder_path = tk.StringVar()
+        root.title(f"{core.APP_NAME} 1.1")
+        root.geometry("1180x845")
+        root.minsize(930, 680)
+        self.settings = core.load_settings()
+
+        self.folder_path = tk.StringVar(value=str(self.settings.get("last_folder", "")))
         self.recursive = tk.BooleanVar(value=self.settings["recursive"])
         self.skip_hidden = tk.BooleanVar(value=self.settings["skip_hidden"])
         self.mode = tk.StringVar(value=self.settings["organisation_mode"])
         self.output_folder = tk.StringVar(value=self.settings["output_folder"])
         self.ignore_text = tk.StringVar(value=", ".join(self.settings["ignore_patterns"]))
         self.ignore_extensions = tk.StringVar(value=", ".join(self.settings["ignored_extensions"]))
-        self.planned_moves = []
-        self.last_moves = []
-        self.scanned_files = []
+        self.exclude_dirs = tk.StringVar(value=", ".join(self.settings["excluded_directories"]))
+        self.include_extensions = tk.StringVar(value=", ".join(self.settings["include_extensions"]))
+        self.filename_pattern = tk.StringVar(value=str(self.settings["filename_pattern"]))
+        self.min_size = tk.StringVar(value=str(self.settings["min_size"]))
+        self.max_size = tk.StringVar(value=str(self.settings["max_size"]))
+        self.theme_var = tk.StringVar(value=self.settings["theme"])
+
+        self.planned_moves: list[dict] = []
+        self.preview_context = None
+        self.pending_preview_context = None
+        self.scanned_files: list[dict] = []
+        self.log_entries: list[dict] = []
         self.busy = False
-        self.setup_style()
-        self.setup_ui()
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-
-    def load_settings(self):
-        settings = DEFAULT_SETTINGS.copy()
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    settings.update(json.load(f))
-            except (OSError, json.JSONDecodeError):
-                pass
-        return settings
-
-    def save_settings(self):
-        self.settings.update({
-            "recursive": self.recursive.get(),
-            "skip_hidden": self.skip_hidden.get(),
-            "output_folder": self.output_folder.get(),
-            "ignore_patterns": self.parse_list(self.ignore_text.get()),
-            "ignored_extensions": [
-                x.lower() if x.startswith(".") else "." + x.lower()
-                for x in self.parse_list(self.ignore_extensions.get())
-            ],
-            "organisation_mode": self.mode.get()
-        })
+        self.job_name = ""
+        self.events = queue.Queue()
+        self.cancel_event = None
+        self.action_buttons = []
+        self.editable_widgets = []
+        self.style = ttk.Style()
         try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.settings, f, indent=4)
-        except OSError as e:
-            self.log(f"Could not save settings: {e}")
-
-    @staticmethod
-    def parse_list(value):
-        return [x.strip() for x in value.split(",") if x.strip()]
-
-    def setup_style(self):
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
+            self.style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("Title.TLabel", font=("Segoe UI", 22, "bold"))
-        style.configure("Subtitle.TLabel", font=("Segoe UI", 10))
-        style.configure("Action.TButton", font=("Segoe UI", 10, "bold"), padding=8)
-        style.configure("Treeview", rowheight=25, font=("Segoe UI", 9))
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+
+        self.setup_ui()
+        self.apply_theme()
+        self.bind_changes()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.after(80, self.poll_events)
+        if self.folder_path.get() and Path(self.folder_path.get()).is_dir():
+            self.summary.configure(text=f"Previous folder: {self.folder_path.get()}. Select Scan or Preview.")
+        self.update_undo_button()
+
+    def bind_changes(self):
+        relevant = [self.folder_path, self.recursive, self.skip_hidden, self.mode,
+                    self.output_folder, self.ignore_text, self.ignore_extensions,
+                    self.exclude_dirs, self.include_extensions, self.filename_pattern,
+                    self.min_size, self.max_size]
+        for var in relevant:
+            var.trace_add("write", self.invalidate_plan)
+        self.theme_var.trace_add("write", lambda *_: self.apply_theme())
+
+    def settings_snapshot(self) -> dict:
+        value = copy.deepcopy(self.settings)
+        value.update({
+            "recursive": self.recursive.get(), "skip_hidden": self.skip_hidden.get(),
+            "organisation_mode": self.mode.get(), "output_folder": self.output_folder.get(),
+            "ignore_patterns": core.parse_list(self.ignore_text.get()),
+            "ignored_extensions": core.normalize_extensions(core.parse_list(self.ignore_extensions.get())),
+            "excluded_directories": core.parse_list(self.exclude_dirs.get()),
+            "include_extensions": core.normalize_extensions(core.parse_list(self.include_extensions.get())),
+            "filename_pattern": self.filename_pattern.get(), "min_size": self.min_size.get(),
+            "max_size": self.max_size.get(), "theme": self.theme_var.get(),
+            "last_folder": self.folder_path.get().strip(),
+        })
+        return value
+
+    def save_settings(self):
+        self.settings = self.settings_snapshot()
+        try:
+            core.save_json_atomic(core.CONFIG_FILE, self.settings)
+        except OSError as exc:
+            self.log(f"SETTINGS ERROR: {exc}")
+
+    def validate_input(self):
+        settings = self.settings_snapshot()
+        root = core.get_root(self.folder_path.get())
+        core.get_output(root, settings)
+        core.validate_filters(settings)
+        core.categories_for(settings)
+        return root, settings
 
     def setup_ui(self):
-        header = ttk.Frame(self.root, padding=(20, 15))
+        header = ttk.Frame(self.root, padding=(18, 12))
         header.pack(fill="x")
-        ttk.Label(header, text="FILE ORGANISER PRO", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(header, text="A smarter way to organise, manage and clean your files.", style="Subtitle.TLabel").pack(anchor="w", pady=(3, 0))
-        folder_frame = ttk.LabelFrame(self.root, text=" Folder Selection ", padding=12)
-        folder_frame.pack(fill="x", padx=20, pady=5)
-        ttk.Entry(folder_frame, textvariable=self.folder_path).pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ttk.Button(folder_frame, text="Browse", command=self.browse_folder).pack(side="right")
-        settings = ttk.LabelFrame(self.root, text=" Organisation Settings ", padding=12)
-        settings.pack(fill="x", padx=20, pady=6)
-        row1 = ttk.Frame(settings)
-        row1.pack(fill="x", pady=4)
-        ttk.Label(row1, text="Organisation method:").pack(side="left")
-        ttk.Combobox(row1, textvariable=self.mode, values=MODES, state="readonly", width=19).pack(side="left", padx=8)
-        ttk.Label(row1, text="Output folder:").pack(side="left", padx=(20, 5))
-        ttk.Entry(row1, textvariable=self.output_folder, width=22).pack(side="left")
-        row2 = ttk.Frame(settings)
-        row2.pack(fill="x", pady=5)
-        ttk.Checkbutton(row2, text="Include subfolders", variable=self.recursive).pack(side="left", padx=(0, 20))
-        ttk.Checkbutton(row2, text="Skip hidden files", variable=self.skip_hidden).pack(side="left")
-        filters = ttk.LabelFrame(self.root, text=" Filters and Exclusions ", padding=12)
-        filters.pack(fill="x", padx=20, pady=5)
-        ttk.Label(filters, text="Ignore filenames / patterns (comma separated):").pack(anchor="w")
-        ttk.Entry(filters, textvariable=self.ignore_text).pack(fill="x", pady=(3, 8))
-        ttk.Label(filters, text="Ignore extensions (comma separated, e.g. .tmp, .log):").pack(anchor="w")
-        ttk.Entry(filters, textvariable=self.ignore_extensions).pack(fill="x", pady=(3, 3))
-        buttons = ttk.Frame(self.root)
-        buttons.pack(pady=12)
-        for label, command in [
-            ("Scan Files", self.scan_folder),
-            ("Preview", self.preview_moves),
-            ("Organise", self.organise_files),
-            ("Undo Last", self.undo_last),
-            ("Custom Categories", self.edit_categories),
-            ("Open Folder", self.open_folder)
+        ttk.Label(header, text="FILE ORGANISER PRO", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text="v1.1   •   local-first / preview-first", style="Sub.TLabel").pack(side="left", padx=16)
+        ttk.Label(header, text="Theme:").pack(side="right", padx=(5, 0))
+        theme = ttk.Combobox(header, textvariable=self.theme_var, values=["Dark", "Light"], state="readonly", width=7)
+        theme.pack(side="right")
+        self.editable_widgets.append((theme, "readonly"))
+
+        folder_frame = ttk.LabelFrame(self.root, text=" Folder Selection ", padding=9)
+        folder_frame.pack(fill="x", padx=18, pady=(0, 5))
+        entry = ttk.Entry(folder_frame, textvariable=self.folder_path)
+        entry.pack(side="left", fill="x", expand=True, padx=(0, 7))
+        self.editable_widgets.append((entry, "normal"))
+        self.add_button(folder_frame, "Browse…", self.browse_folder, side="left")
+        self.add_button(folder_frame, "Open Folder", self.open_folder, side="left")
+
+        settings_box = ttk.LabelFrame(self.root, text=" Organisation Settings ", padding=9)
+        settings_box.pack(fill="x", padx=18, pady=4)
+        row1 = ttk.Frame(settings_box)
+        row1.pack(fill="x", pady=2)
+        ttk.Label(row1, text="Method:").pack(side="left")
+        method = ttk.Combobox(row1, textvariable=self.mode, values=core.MODES, state="readonly", width=18)
+        method.pack(side="left", padx=(5, 16))
+        self.editable_widgets.append((method, "readonly"))
+        ttk.Label(row1, text="Output folder:").pack(side="left")
+        out_entry = ttk.Entry(row1, textvariable=self.output_folder, width=21)
+        out_entry.pack(side="left", padx=(5, 18))
+        self.editable_widgets.append((out_entry, "normal"))
+        self.add_check(row1, "Include subfolders", self.recursive)
+        self.add_check(row1, "Skip hidden", self.skip_hidden)
+
+        filters = ttk.LabelFrame(self.root, text=" Filters / Exclusions (comma-separated where applicable) ", padding=9)
+        filters.pack(fill="x", padx=18, pady=4)
+        r = ttk.Frame(filters)
+        r.pack(fill="x", pady=2)
+        self.filter_field(r, "Ignore names/patterns:", self.ignore_text, grow=True)
+        self.filter_field(r, "Ignore extensions:", self.ignore_extensions, width=20)
+        r = ttk.Frame(filters)
+        r.pack(fill="x", pady=2)
+        self.filter_field(r, "Exclude directories:", self.exclude_dirs, grow=True)
+        self.filter_field(r, "Only extensions:", self.include_extensions, width=20)
+        r = ttk.Frame(filters)
+        r.pack(fill="x", pady=2)
+        self.filter_field(r, "Filename glob:", self.filename_pattern, width=21)
+        self.filter_field(r, "Min size:", self.min_size, width=11)
+        self.filter_field(r, "Max size:", self.max_size, width=11)
+        ttk.Label(r, text="e.g. *.pdf   /   100 KB   /   2 GB", style="Sub.TLabel").pack(side="left", padx=8)
+
+        actions = ttk.Frame(self.root, padding=(18, 7))
+        actions.pack(fill="x")
+        for label, cmd in [
+            ("Scan Files", self.scan_folder), ("Preview Moves", self.preview_moves),
+            ("Organise Selected", self.organise_files), ("Undo Last", self.undo_last),
+            ("Find Duplicates", self.find_duplicates), ("Custom Categories", self.edit_categories),
         ]:
-            ttk.Button(buttons, text=label, command=command, style="Action.TButton").pack(side="left", padx=4)
-        self.summary = ttk.Label(self.root, text="Select a folder to get started.", font=("Segoe UI", 10, "bold"))
-        self.summary.pack(pady=5)
-        self.progress = ttk.Progressbar(self.root, mode="determinate")
-        self.progress.pack(fill="x", padx=25, pady=5)
+            b = self.add_button(actions, label, cmd, side="left", style="Action.TButton")
+            if label == "Undo Last":
+                self.undo_btn = b
+        self.cancel_btn = ttk.Button(actions, text="Cancel Job", command=self.cancel_job, state="disabled")
+        self.cancel_btn.pack(side="right", padx=2)
+
+        progress_frame = ttk.Frame(self.root, padding=(18, 0, 18, 7))
+        progress_frame.pack(fill="x")
+        self.summary = ttk.Label(progress_frame, text="Select a folder to get started.", style="Summary.TLabel")
+        self.summary.pack(anchor="w", pady=(2, 4))
+        self.progress = ttk.Progressbar(progress_frame, mode="determinate")
+        self.progress.pack(fill="x")
+        self.progress_text = ttk.Label(progress_frame, text="Ready", style="Sub.TLabel")
+        self.progress_text.pack(anchor="w", pady=(3, 0))
+
         notebook = ttk.Notebook(self.root)
-        notebook.pack(fill="both", expand=True, padx=20, pady=(5, 15))
-        preview_tab = ttk.Frame(notebook, padding=8)
-        notebook.add(preview_tab, text="File Preview")
-        columns = ("name", "category", "destination", "size")
-        self.tree = ttk.Treeview(preview_tab, columns=columns, show="headings")
-        headings = {"name": "File Name", "category": "Category", "destination": "Destination", "size": "Size"}
-        widths = {"name": 230, "category": 130, "destination": 330, "size": 90}
-        for col in columns:
-            self.tree.heading(col, text=headings[col])
-            self.tree.column(col, width=widths[col])
-        scrollbar = ttk.Scrollbar(preview_tab, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        log_tab = ttk.Frame(notebook, padding=8)
+        notebook.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        preview_tab = ttk.Frame(notebook, padding=7)
+        notebook.add(preview_tab, text="Move Preview")
+        selection_bar = ttk.Frame(preview_tab)
+        selection_bar.pack(fill="x", pady=(0, 6))
+        for label, cmd in [("Include All", lambda: self.select_all(True)),
+                           ("Exclude All", lambda: self.select_all(False)),
+                           ("Toggle Highlighted", self.toggle_highlighted)]:
+            ttk.Button(selection_bar, text=label, command=cmd).pack(side="left", padx=(0, 6))
+        ttk.Label(selection_bar, text="Double-click a row or highlight rows to toggle inclusion.",
+                  style="Sub.TLabel").pack(side="right")
+        self.tree = self.make_tree(preview_tab,
+                                   ("include", "name", "category", "destination", "size"),
+                                   ("Use", "File Name", "Group", "Destination", "Size"),
+                                   (52, 210, 140, 505, 94))
+        self.tree.bind("<Double-1>", self.on_preview_double_click)
+        self.tree.bind("<space>", lambda _: self.toggle_highlighted())
+
+        duplicate_tab = ttk.Frame(notebook, padding=7)
+        notebook.add(duplicate_tab, text="Duplicates (read-only)")
+        ttk.Label(duplicate_tab, text="Matching SHA-256 hashes. No files are removed automatically.",
+                  style="Sub.TLabel").pack(anchor="w", pady=(0, 6))
+        self.duplicates_tree = self.make_tree(duplicate_tab,
+                                              ("group", "hash", "size", "path"),
+                                              ("Group", "SHA-256 prefix", "Size", "File path"),
+                                              (70, 135, 100, 700))
+
+        log_tab = ttk.Frame(notebook, padding=7)
         notebook.add(log_tab, text="Activity Log")
-        self.log_box = tk.Text(log_tab, font=("Consolas", 9), wrap="word", state="disabled", bg="#202124", fg="#e8eaed", insertbackground="white")
-        log_scroll = ttk.Scrollbar(log_tab, command=self.log_box.yview)
+        log_buttons = ttk.Frame(log_tab)
+        log_buttons.pack(side="bottom", fill="x", pady=(7, 0))
+        ttk.Button(log_buttons, text="Export TXT / CSV…", command=self.export_log).pack(side="left")
+        ttk.Button(log_buttons, text="Clear Log", command=self.clear_log).pack(side="right")
+        text_frame = ttk.Frame(log_tab)
+        text_frame.pack(fill="both", expand=True)
+        self.log_box = tk.Text(text_frame, font=("Consolas", 9), wrap="word", state="disabled",
+                               borderwidth=0, highlightthickness=0)
+        log_scroll = ttk.Scrollbar(text_frame, orient="vertical", command=self.log_box.yview)
         self.log_box.configure(yscrollcommand=log_scroll.set)
         self.log_box.pack(side="left", fill="both", expand=True)
         log_scroll.pack(side="right", fill="y")
-        ttk.Button(log_tab, text="Clear Log", command=self.clear_log).pack(anchor="e", pady=5)
 
-    def log(self, message):
-        timestamp = datetime.now().strftime("%H:%M:%S")
+    def add_button(self, parent, label, command, side="left", style=None):
+        btn = ttk.Button(parent, text=label, command=command, style=style or "TButton")
+        btn.pack(side=side, padx=(0, 6))
+        self.action_buttons.append(btn)
+        return btn
+
+    def add_check(self, parent, text, var):
+        c = ttk.Checkbutton(parent, text=text, variable=var)
+        c.pack(side="left", padx=(0, 15))
+        self.editable_widgets.append((c, "normal"))
+
+    def filter_field(self, parent, label, var, width=24, grow=False):
+        ttk.Label(parent, text=label).pack(side="left", padx=(0, 4))
+        entry = ttk.Entry(parent, textvariable=var, width=width)
+        entry.pack(side="left", padx=(0, 14), fill="x" if grow else None, expand=grow)
+        self.editable_widgets.append((entry, "normal"))
+
+    @staticmethod
+    def make_tree(parent, columns, headings, widths):
+        holder = ttk.Frame(parent)
+        holder.pack(fill="both", expand=True)
+        tree = ttk.Treeview(holder, columns=columns, show="headings", selectmode="extended")
+        for col, label, width in zip(columns, headings, widths):
+            tree.heading(col, text=label)
+            tree.column(col, width=width, anchor="center" if col in ("include", "group", "size") else "w",
+                        stretch=col in ("path", "destination", "name"))
+        scroll_y = ttk.Scrollbar(holder, orient="vertical", command=tree.yview)
+        scroll_x = ttk.Scrollbar(holder, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        scroll_y.pack(side="right", fill="y")
+        scroll_x.pack(side="bottom", fill="x")
+        tree.pack(side="left", fill="both", expand=True)
+        return tree
+
+    def apply_theme(self):
+        dark = self.theme_var.get() == "Dark"
+        bg, fg = ("#20252d", "#e6edf5") if dark else ("#f5f7fa", "#20252d")
+        panel, field = ("#2b323c", "#161b22") if dark else ("#e7ebef", "#ffffff")
+        selected = "#2563a8" if dark else "#bbd8f9"
+        self.root.configure(background=bg)
+        s = self.style
+        s.configure("TFrame", background=bg)
+        s.configure("TLabelframe", background=bg, foreground=fg)
+        s.configure("TLabelframe.Label", background=bg, foreground=fg)
+        s.configure("TLabel", background=bg, foreground=fg)
+        s.configure("Title.TLabel", background=bg, foreground=fg, font=("Segoe UI", 20, "bold"))
+        s.configure("Summary.TLabel", background=bg, foreground=fg, font=("Segoe UI", 10, "bold"))
+        s.configure("Sub.TLabel", background=bg, foreground="#aeb8c6" if dark else "#5b6573")
+        s.configure("TButton", background=panel, foreground=fg, padding=5)
+        s.map("TButton", background=[("active", "#3a4d61" if dark else "#d4dce4")],
+              foreground=[("disabled", "#77818f")])
+        s.configure("Action.TButton", font=("Segoe UI", 9, "bold"), padding=7)
+        s.configure("TCheckbutton", background=bg, foreground=fg)
+        s.map("TCheckbutton", background=[("active", bg)])
+        s.configure("TEntry", fieldbackground=field, foreground=fg, insertcolor=fg)
+        s.configure("TCombobox", fieldbackground=field, foreground=fg, background=panel,
+                    arrowcolor=fg)
+        s.map("TCombobox", fieldbackground=[("readonly", field)], foreground=[("readonly", fg)])
+        s.configure("Treeview", fieldbackground=field, background=field, foreground=fg, rowheight=25)
+        s.configure("Treeview.Heading", background=panel, foreground=fg, font=("Segoe UI", 9, "bold"))
+        s.map("Treeview", background=[("selected", selected)], foreground=[("selected", fg)])
+        s.configure("TNotebook", background=bg)
+        s.configure("TNotebook.Tab", background=panel, foreground=fg, padding=(11, 5))
+        s.map("TNotebook.Tab", background=[("selected", field)])
+        s.configure("Horizontal.TProgressbar", background="#4b9ef9", troughcolor=panel)
+        self.log_box.configure(bg=field, fg=fg, insertbackground=fg)
+        self.tree.tag_configure("excluded", foreground="#8a929d" if dark else "#8b9198")
+
+    def invalidate_plan(self, *_):
+        self.preview_context = None
+        if not self.planned_moves:
+            return
+        self.planned_moves = []
+        self.clear_tree(self.tree)
+        if not self.busy:
+            self.summary.configure(text="Settings changed. Generate a new preview before organising.")
+
+    @staticmethod
+    def clear_tree(tree):
+        children = tree.get_children()
+        if children:
+            tree.delete(*children)
+
+    def log(self, message: str):
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = str(message).split(":", 1)[0] if ":" in str(message) else "INFO"
+        self.log_entries.append({"timestamp": now, "status": status, "message": str(message)})
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", f"[{timestamp}] {message}\n")
+        self.log_box.insert("end", f"[{now}] {message}\n")
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
 
     def clear_log(self):
+        self.log_entries.clear()
         self.log_box.configure(state="normal")
         self.log_box.delete("1.0", "end")
         self.log_box.configure(state="disabled")
 
-    def browse_folder(self):
-        folder = filedialog.askdirectory()
-        if folder:
-            self.folder_path.set(folder)
-            self.save_settings()
-            self.log(f"Selected folder: {folder}")
-            self.scan_folder()
-
-    def valid_folder(self):
-        folder = Path(self.folder_path.get()).expanduser()
-        if not folder.is_dir():
-            messagebox.showerror("Invalid Folder", "Please select an existing folder.")
-            return None
-        return folder.resolve()
-
-    def open_folder(self):
-        folder = self.valid_folder()
-        if not folder:
+    def export_log(self):
+        if not self.log_entries:
+            messagebox.showinfo("Export Activity", "No activity has been logged yet.")
+            return
+        filename = filedialog.asksaveasfilename(title="Export activity log", defaultextension=".txt",
+                                                filetypes=[("Text file", "*.txt"), ("CSV file", "*.csv")])
+        if not filename:
             return
         try:
-            if platform.system() == "Windows":
+            with open(filename, "w", encoding="utf-8", newline="") as f:
+                if Path(filename).suffix.lower() == ".csv":
+                    writer = csv.DictWriter(f, fieldnames=["timestamp", "status", "message"])
+                    writer.writeheader()
+                    writer.writerows(self.log_entries)
+                else:
+                    for item in self.log_entries:
+                        f.write(f"[{item['timestamp']}] {item['message']}\n")
+            self.log(f"EXPORTED: {filename}")
+        except OSError as exc:
+            messagebox.showerror("Export Failed", str(exc))
+
+    def browse_folder(self):
+        selected = filedialog.askdirectory(initialdir=self.folder_path.get() or str(Path.home()))
+        if selected:
+            self.folder_path.set(selected)
+            self.save_settings()
+            self.log(f"Selected folder: {selected}")
+            self.scan_folder()
+
+    def open_folder(self):
+        try:
+            folder = core.get_root(self.folder_path.get())
+            system = platform.system()
+            if system == "Windows":
                 os.startfile(str(folder))
-            elif platform.system() == "Darwin":
+            elif system == "Darwin":
                 subprocess.Popen(["open", str(folder)])
             else:
                 subprocess.Popen(["xdg-open", str(folder)])
-        except (OSError, AttributeError) as e:
-            messagebox.showerror("Error", str(e))
-
-    def get_categories(self):
-        categories = {key: list(value) for key, value in DEFAULT_CATEGORIES.items()}
-        for key, extensions in self.settings.get("custom_categories", {}).items():
-            categories[key] = extensions
-        return categories
+        except (ValueError, OSError, AttributeError) as exc:
+            messagebox.showerror("Open Folder", str(exc))
 
     def edit_categories(self):
-        window = tk.Toplevel(self.root)
-        window.title("Custom Categories")
-        window.geometry("540x420")
-        window.transient(self.root)
-        ttk.Label(window, text="Create your own file categories", font=("Segoe UI", 13, "bold")).pack(pady=(15, 5))
-        ttk.Label(window, text="One category per line: Category: .ext, .ext").pack(pady=5)
-        editor = tk.Text(window, height=13, font=("Consolas", 10))
-        editor.pack(fill="both", expand=True, padx=15, pady=8)
-        for category, extensions in self.settings.get("custom_categories", {}).items():
-            editor.insert("end", f"{category}: {', '.join(extensions)}\n")
+        if self.busy:
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Custom Categories")
+        dialog.geometry("540x430")
+        dialog.transient(self.root)
+        ttk.Label(dialog, text="One category per line: Category: .ext, .ext").pack(pady=10)
+        editor = tk.Text(dialog, font=("Consolas", 10), height=14)
+        editor.pack(fill="both", expand=True, padx=12)
+        for name, exts in self.settings.get("custom_categories", {}).items():
+            editor.insert("end", f"{name}: {', '.join(exts)}\n")
 
         def save():
             custom = {}
-            for line in editor.get("1.0", "end").splitlines():
-                if not line.strip():
-                    continue
-                if ":" not in line:
-                    messagebox.showerror("Invalid Format", f"Invalid category line:\n{line}")
-                    return
-                name, extensions = line.split(":", 1)
-                name = name.strip()
-                if not name or name in (".", ".."):
-                    messagebox.showerror("Invalid Category", "Please enter a valid category name.")
-                    return
-                if any(c in name for c in r'/:?"<>|'):
-                    messagebox.showerror("Invalid Category", "Category names cannot contain filesystem-reserved characters.")
-                    return
-                custom[name] = [
-                    ext.strip().lower() if ext.strip().startswith(".") else "." + ext.strip().lower()
-                    for ext in extensions.split(",") if ext.strip()
-                ]
-            self.settings["custom_categories"] = custom
-            self.save_settings()
-            self.planned_moves.clear()
-            self.log("Custom categories updated.")
-            window.destroy()
-
-        ttk.Button(window, text="Save Categories", command=save).pack(pady=12)
-
-    def get_category(self, file):
-        ext = file.suffix.lower()
-        for category, extensions in self.get_categories().items():
-            if ext in extensions:
-                return category
-        return "Others"
-
-    def is_ignored(self, file, root):
-        name = file.name
-        if self.skip_hidden.get() and name.startswith("."):
-            return True
-        if name.startswith("~$"):
-            return True
-        if file.suffix.lower() in self.settings["ignored_extensions"]:
-            return True
-        patterns = self.parse_list(self.ignore_text.get())
-        relative = file.relative_to(root).as_posix()
-        for pattern in patterns:
-            if fnmatch.fnmatch(name.lower(), pattern.lower()):
-                return True
-            if fnmatch.fnmatch(relative.lower(), pattern.lower()):
-                return True
-        return False
-
-    def get_files(self):
-        root = self.valid_folder()
-        if not root:
-            return []
-        output_name = self.output_folder.get().strip()
-        if not output_name or output_name in (".", ".."):
-            messagebox.showerror("Invalid Output", "Please enter a valid output folder name.")
-            return []
-        if Path(output_name).is_absolute() or len(Path(output_name).parts) != 1:
-            messagebox.showerror("Invalid Output", "The output folder must be a single folder name.")
-            return []
-        output = root / output_name
-        if output.resolve() == root:
-            messagebox.showerror("Invalid Output", "The output folder cannot be the selected folder.")
-            return []
-        files = []
-        errors = 0
-
-        def walk_error(error):
-            nonlocal errors
-            errors += 1
-            self.log(f"SCAN ERROR: {error}")
-
-        if self.recursive.get():
-            for current, dirs, filenames in os.walk(root, topdown=True, followlinks=False, onerror=walk_error):
-                current_path = Path(current)
-                dirs[:] = [
-                    d for d in dirs
-                    if not (current_path == root and d == output_name)
-                    and not (Path(current) / d).is_symlink()
-                ]
-                for name in filenames:
-                    file = current_path / name
-                    try:
-                        if not file.is_file() or file.is_symlink():
-                            continue
-                        if not self.is_ignored(file, root):
-                            files.append(file)
-                    except OSError as e:
-                        errors += 1
-                        self.log(f"SKIPPED {name}: {e}")
-        else:
             try:
-                for file in root.iterdir():
-                    if not file.is_file() or file.is_symlink():
+                for line in editor.get("1.0", "end").splitlines():
+                    if not line.strip():
                         continue
-                    if not self.is_ignored(file, root):
-                        files.append(file)
-            except OSError as e:
-                self.log(f"SCAN ERROR: {e}")
-        self.log(f"Scan completed: {len(files)} files, {errors} errors.")
-        return sorted(files, key=lambda f: str(f).lower())
+                    if ":" not in line:
+                        raise ValueError(f"Missing ':' on line: {line}")
+                    name, extensions = line.split(":", 1)
+                    name = core.validate_component(name.strip())
+                    custom[name] = core.normalize_extensions(core.parse_list(extensions))
+                self.settings["custom_categories"] = custom
+                self.invalidate_plan()
+                self.save_settings()
+                self.log("Custom categories updated.")
+                dialog.destroy()
+            except ValueError as exc:
+                messagebox.showerror("Invalid Category", str(exc), parent=dialog)
 
-    @staticmethod
-    def format_size(size):
-        value = float(size)
-        for unit in ["B", "KB", "MB", "GB", "TB"]:
-            if value < 1024 or unit == "TB":
-                return f"{value:.1f} {unit}"
-            value /= 1024
+        ttk.Button(dialog, text="Save Categories", command=save).pack(pady=10)
 
-    def get_destination_category(self, file):
-        mode = self.mode.get()
-        if mode == "Category":
-            return self.get_category(file)
-        if mode == "Extension":
-            return file.suffix.lower().replace(".", "").upper() or "No Extension"
-        if mode in ("Date Modified", "Date Created"):
-            stat = file.stat()
-            if mode == "Date Modified":
-                timestamp = stat.st_mtime
-            else:
-                timestamp = getattr(stat, "st_birthtime", stat.st_ctime)
-            date = datetime.fromtimestamp(timestamp)
-            return str(date.year) + "/" + date.strftime("%m - %B")
-        if mode == "File Size":
-            size = file.stat().st_size
-            if size < 1024 * 1024:
-                return "Small - Under 1 MB"
-            if size < 100 * 1024 * 1024:
-                return "Medium - 1 to 100 MB"
-            if size < 1024 * 1024 * 1024:
-                return "Large - 100 MB to 1 GB"
-            return "Huge - Over 1 GB"
-        return "Others"
+    def set_busy(self, busy: bool):
+        self.busy = busy
+        for btn in self.action_buttons:
+            btn.configure(state="disabled" if busy else "normal")
+        for widget, original in self.editable_widgets:
+            widget.configure(state="disabled" if busy else original)
+        self.cancel_btn.configure(state="normal" if busy else "disabled")
+        if not busy:
+            self.update_undo_button()
 
-    def make_plan(self):
-        root = self.valid_folder()
-        if not root:
-            return []
-        files = self.get_files()
-        output = root / self.output_folder.get().strip()
-        plan = []
-        reserved = set()
-        for source in files:
-            try:
-                category = self.get_destination_category(source)
-                destination_folder = output / category
-                destination = destination_folder / source.name
-                counter = 1
-                while destination.exists() or destination in reserved:
-                    destination = destination_folder / f"{source.stem}_{counter}{source.suffix}"
-                    counter += 1
-                reserved.add(destination)
-                plan.append({
-                    "source": source,
-                    "destination": destination,
-                    "category": category,
-                    "size": source.stat().st_size
-                })
-            except (OSError, ValueError) as e:
-                self.log(f"PREVIEW ERROR {source.name}: {e}")
-        return plan
+    def update_undo_button(self):
+        if not self.busy:
+            self.undo_btn.configure(state="normal" if core.load_history().get("moves") else "disabled")
 
-    def preview_moves(self):
+    def start_job(self, name: str, work):
         if self.busy:
             return
-        self.save_settings()
-        self.planned_moves = self.make_plan()
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        categories = {}
-        for move in self.planned_moves:
-            source = move["source"]
-            destination = move["destination"]
-            category = move["category"]
-            categories[category] = categories.get(category, 0) + 1
-            self.tree.insert("", "end", values=(source.name, category, str(destination), self.format_size(move["size"])))
-        total_size = sum(x["size"] for x in self.planned_moves)
-        self.summary.config(text=f"{len(self.planned_moves)} files | {len(categories)} groups | {self.format_size(total_size)} total")
-        self.log(f"Preview generated: {len(self.planned_moves)} moves.")
-        for category, count in sorted(categories.items()):
-            self.log(f" {category}: {count} files")
+        self.cancel_event = threading.Event()
+        self.job_name = name
+        self.set_busy(True)
+        self.progress.configure(mode="indeterminate" if name in ("scan", "preview", "duplicates") else "determinate",
+                                value=0, maximum=100)
+        if name in ("scan", "preview", "duplicates"):
+            self.progress.start(10)
+        self.summary.configure(text=f"{name.capitalize()} running…")
+        self.progress_text.configure(text="Starting…")
+
+        def worker():
+            def report(current, total, filename):
+                self.events.put(("progress", current, total, filename))
+
+            def write_log(line):
+                self.events.put(("log", line))
+
+            try:
+                result = work(report, write_log, self.cancel_event)
+                self.events.put(("done", name, result, None))
+            except core.Cancelled:
+                self.events.put(("done", name, None, "Cancelled"))
+            except Exception as exc:
+                self.events.put(("done", name, None, str(exc)))
+
+        threading.Thread(target=worker, name=f"FileOrganiser-{name}", daemon=True).start()
+
+    def cancel_job(self):
+        if self.busy and self.cancel_event:
+            self.cancel_event.set()
+            self.progress_text.configure(text="Cancellation requested; finishing current safe boundary…")
+            self.cancel_btn.configure(state="disabled")
+
+    def poll_events(self):
+        try:
+            while True:
+                event = self.events.get_nowait()
+                if event[0] == "log":
+                    self.log(event[1])
+                elif event[0] == "progress":
+                    _, current, total, filename = event
+                    if total is not None:
+                        if str(self.progress.cget("mode")) == "indeterminate":
+                            self.progress.stop()
+                            self.progress.configure(mode="determinate")
+                        self.progress.configure(maximum=max(total, 1), value=current)
+                        self.progress_text.configure(text=f"Processed {current} / {total}  •  Remaining {max(total-current,0)}  •  {filename}")
+                    else:
+                        self.progress_text.configure(text=f"Scanned {current} entries  •  {filename}")
+                elif event[0] == "done":
+                    _, name, result, error = event
+                    self.progress.stop()
+                    self.set_busy(False)
+                    self.on_job_done(name, result, error)
+        except queue.Empty:
+            pass
+        try:
+            self.root.after(80, self.poll_events)
+        except tk.TclError:
+            pass
+
+    def on_job_done(self, name, result, error):
+        if error:
+            self.summary.configure(text=f"{name.capitalize()}: {error}")
+            self.log(f"JOB: {name}: {error}")
+            if error != "Cancelled":
+                messagebox.showerror(f"{name.capitalize()} Failed", error)
+            return
+        if name == "scan":
+            self.scanned_files = result
+            self.planned_moves.clear()
+            self.clear_tree(self.tree)
+            size = sum(item["snapshot"]["size"] for item in result)
+            self.summary.configure(text=f"Scan complete: {len(result)} files  •  {core.format_size(size)}")
+        elif name == "preview":
+            self.scanned_files, self.planned_moves = result
+            self.preview_context = self.pending_preview_context
+            self.populate_preview()
+        elif name == "duplicates":
+            self.populate_duplicates(result)
+        elif name == "organise":
+            self.invalidate_plan()
+            self.scanned_files = []
+            self.summary.configure(text=f"Organised: {result['moved']} moved  •  {result['skipped']} skipped  •  {result['errors']} errors"
+                                        + ("  •  cancelled" if result["cancelled"] else ""))
+            self.log(f"RESULT: {self.summary.cget('text')}")
+            self.update_undo_button()
+        elif name == "undo":
+            self.invalidate_plan()
+            self.scanned_files = []
+            self.summary.configure(text=f"Undo: {result['restored']} restored  •  {result['skipped']} skipped  •  {result['errors']} errors"
+                                        + ("  •  cancelled" if result["cancelled"] else ""))
+            self.log(f"RESULT: {self.summary.cget('text')}")
+            self.update_undo_button()
+        self.progress_text.configure(text="Finished" if not result or not isinstance(result, dict) or not result.get("cancelled") else "Stopped safely")
+
+    def scan_folder(self):
+        try:
+            root, settings = self.validate_input()
+            self.save_settings()
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Invalid Settings", str(exc))
+            return
+        self.start_job("scan", lambda p, l, c: core.scan(root, settings, p, l, c))
+
+    def preview_moves(self):
+        try:
+            root, settings = self.validate_input()
+            self.save_settings()
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Invalid Settings", str(exc))
+            return
+
+        def run(progress, logger, cancel):
+            records = core.scan(root, settings, progress, logger, cancel)
+            return records, core.build_plan(records, root, settings, logger, cancel)
+
+        self.planned_moves = []
+        self.preview_context = None
+        self.pending_preview_context = (str(root), copy.deepcopy(settings))
+        self.clear_tree(self.tree)
+        self.start_job("preview", run)
+
+    def populate_preview(self):
+        self.clear_tree(self.tree)
+        for index, item in enumerate(self.planned_moves):
+            self.tree.insert("", "end", iid=f"p{index}", values=("✓" if item["selected"] else "–",
+                Path(item["source"]).name, item["category"], item["destination"], core.format_size(item["size"])),
+                tags=() if item["selected"] else ("excluded",))
+        self.refresh_selection_summary()
+
+    def refresh_selection_summary(self):
+        included = [p for p in self.planned_moves if p["selected"]]
+        total_size = sum(p["size"] for p in included)
+        self.summary.configure(text=f"Preview: {len(included)} selected / {len(self.planned_moves)} files  •  {core.format_size(total_size)}")
+
+    def select_all(self, checked):
+        if self.busy:
+            return
+        for item in self.planned_moves:
+            item["selected"] = checked
+        self.populate_preview()
+
+    def toggle_highlighted(self):
+        if self.busy:
+            return
+        for row in self.tree.selection():
+            index = int(row[1:])
+            if index < len(self.planned_moves):
+                obj = self.planned_moves[index]
+                obj["selected"] = not obj["selected"]
+                self.tree.item(row, values=("✓" if obj["selected"] else "–", Path(obj["source"]).name,
+                                   obj["category"], obj["destination"], core.format_size(obj["size"])),
+                               tags=() if obj["selected"] else ("excluded",))
+        self.refresh_selection_summary()
+
+    def on_preview_double_click(self, event):
+        if self.busy:
+            return
+        row = self.tree.identify_row(event.y)
+        if row:
+            self.tree.selection_set(row)
+            self.toggle_highlighted()
 
     def organise_files(self):
         if self.busy:
             return
         if not self.planned_moves:
-            self.preview_moves()
-        if not self.planned_moves:
+            messagebox.showinfo("Preview Required", "Generate a preview and select files before organising.")
             return
-        if not messagebox.askyesno(
-            "Confirm Organisation",
-            f"Move {len(self.planned_moves)} files?\n"
-            "Files will be moved into your selected output folder.\n"
-            "You can use Undo Last to reverse successful moves."
-        ):
+        chosen = sum(bool(p["selected"]) for p in self.planned_moves)
+        if not chosen:
+            messagebox.showinfo("Nothing Selected", "Select at least one file in the preview.")
             return
-        valid_plan = []
-        for move in self.planned_moves:
-            if not move["source"].is_file():
-                self.log(f"SKIPPED: Source no longer exists: {move['source']}")
-                continue
-            if move["destination"].exists():
-                self.log(f"SKIPPED: Destination already exists: {move['destination']}")
-                continue
-            valid_plan.append(move)
-        if not valid_plan:
-            messagebox.showwarning("Nothing to organise", "No valid moves remain. Please create a new preview.")
-            self.planned_moves = []
-            return
-        self.busy = True
-        self.progress["maximum"] = len(valid_plan)
-        self.progress["value"] = 0
-        moved = 0
-        errors = 0
-        completed = []
-        self.log("========== ORGANISING ==========")
+        # Checking again prevents execution with changed input configuration.
         try:
-            for index, move in enumerate(valid_plan, start=1):
-                source = move["source"]
-                destination = move["destination"]
-                try:
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    if destination.exists():
-                        raise FileExistsError("Destination appeared during organisation.")
-                    shutil.move(str(source), str(destination))
-                    completed.append({"source": source, "destination": destination})
-                    moved += 1
-                    self.log(f"MOVED: {source.name} -> {move['category']}")
-                except (OSError, shutil.Error) as e:
-                    errors += 1
-                    self.log(f"ERROR: {source.name}: {e}")
-                self.progress["value"] = index
-                self.summary.config(text=f"Organising... {index}/{len(valid_plan)}")
-                self.root.update_idletasks()
-        finally:
-            self.busy = False
-        self.last_moves = completed
-        self.planned_moves = []
-        self.summary.config(text=f"Complete: {moved} moved | {errors} errors")
-        self.log("========== COMPLETE ==========")
-        messagebox.showinfo("Organisation Complete", f"Successfully moved: {moved}\nErrors: {errors}\nUse Undo Last to reverse successful moves.")
+            root, settings = self.validate_input()
+            if self.preview_context != (str(root), settings):
+                raise ValueError("Folder or settings changed; recreate the preview.")
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Invalid Settings", str(exc))
+            return
+        prior = len(core.load_history().get("moves", []))
+        notice = (f"Move {chosen} selected files?\n\n"
+                  "Existing destination files will never be replaced.\n"
+                  "Changed or missing sources will be skipped.\n"
+                  "Cancellation stops at a safe file boundary.")
+        if prior:
+            notice += f"\n\nNote: This replaces undo history for {prior} earlier moves."
+        if not messagebox.askyesno("Confirm Organisation", notice):
+            return
+        plan = copy.deepcopy(self.planned_moves)
+        self.start_job("organise", lambda p, l, c: core.organise(plan, root, p, l, c))
 
     def undo_last(self):
-        if self.busy:
+        history = core.load_history()
+        count = len(history.get("moves", []))
+        if not count:
+            messagebox.showinfo("Undo", "There are no moves to undo.")
             return
-        if not self.last_moves:
-            messagebox.showinfo("Undo", "There are no successful moves to undo.")
+        msg = (f"Try to restore {count} files from the most recent operation?\n\n"
+               "Modified files and occupied original locations will be skipped.\n"
+               "The undo journal is updated after each successful restoration.")
+        if not messagebox.askyesno("Confirm Undo", msg):
             return
-        if not messagebox.askyesno("Undo Organisation", f"Reverse the last {len(self.last_moves)} successful moves?"):
-            return
-        restored = 0
-        errors = 0
-        remaining = []
-        for move in reversed(self.last_moves):
-            source = move["source"]
-            destination = move["destination"]
-            try:
-                if not destination.exists():
-                    raise FileNotFoundError("Moved file can no longer be found.")
-                if source.exists():
-                    raise FileExistsError("Original location is already occupied.")
-                source.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(destination), str(source))
-                restored += 1
-                self.log(f"RESTORED: {source.name}")
-            except (OSError, shutil.Error) as e:
-                errors += 1
-                remaining.append(move)
-                self.log(f"UNDO ERROR: {source.name}: {e}")
-        self.last_moves = list(reversed(remaining))
-        self.summary.config(text=f"Undo complete: {restored} restored | {errors} errors")
-        messagebox.showinfo("Undo Complete", f"Restored: {restored}\nErrors: {errors}")
+        self.start_job("undo", lambda p, l, c: core.undo(progress=p, logger=l, cancel=c))
 
-    def scan_folder(self):
-        if self.busy:
+    def find_duplicates(self):
+        try:
+            root, settings = self.validate_input()
+            self.save_settings()
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Invalid Settings", str(exc))
             return
-        self.save_settings()
-        files = self.get_files()
-        self.scanned_files = files
-        if not files:
-            self.summary.config(text="No matching files found.")
-            return
-        categories = {}
-        total_size = 0
-        for file in files:
-            try:
-                category = self.get_destination_category(file)
-                categories[category] = categories.get(category, 0) + 1
-                total_size += file.stat().st_size
-            except OSError as e:
-                self.log(f"SCAN ERROR: {file.name}: {e}")
-        self.summary.config(text=f"{len(files)} files | {len(categories)} groups | {self.format_size(total_size)} total")
-        self.planned_moves = []
-        self.log("========== SCAN RESULTS ==========")
-        for category, count in sorted(categories.items()):
-            self.log(f"{category}: {count} files")
-        self.log(f"Total size: {self.format_size(total_size)}")
+
+        def run(progress, logger, cancel):
+            records = core.scan(root, settings, progress, logger, cancel)
+            return core.find_duplicates(records, progress, logger, cancel)
+
+        self.start_job("duplicates", run)
+
+    def populate_duplicates(self, groups):
+        self.clear_tree(self.duplicates_tree)
+        extra = 0
+        for index, group in enumerate(groups, 1):
+            extra += (len(group["paths"]) - 1) * group["size"]
+            for path in group["paths"]:
+                self.duplicates_tree.insert("", "end", values=(index, group["sha256"][:16],
+                    core.format_size(group["size"]), path))
+        self.summary.configure(text=f"Duplicates: {len(groups)} groups  •  {core.format_size(extra)} potentially redundant storage (no changes made)")
+        self.log(f"DUPLICATES: {len(groups)} SHA-256 match groups found; no files deleted.")
 
     def on_close(self):
+        if self.busy and self.cancel_event:
+            if not messagebox.askyesno("Operation Running", "An operation is running. Request cancellation and close the app?"):
+                return
+            self.cancel_event.set()
         self.save_settings()
         self.root.destroy()
 
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = FileOrganiser(root)
+    FileOrganiser(root)
     root.mainloop()
