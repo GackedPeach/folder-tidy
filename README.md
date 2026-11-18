@@ -1,71 +1,57 @@
 # File Organiser Pro
 
-A small desktop app for organising messy downloads, photos, videos and backup
-exports. It creates sorted **copies** in a **Files Sorted** folder, keeping
-your originals in place.
+A little desktop app for sorting messy downloads, photos, videos and backup exports. It puts sorted **copies** in a **Files Sorted** folder and leaves your originals where they are.
 
-**Version 1.2 public beta — a work in progress, ready for testing.**
+**v1.2 public beta** — still being worked on. Try a small folder first and let me know how it goes.
 
-## Download and run
+[Download the beta](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.1) · [App instructions](file-organiser-pro/) · [Source code](file-organiser-pro/file_organiser_pro.py) · [Report a bug](https://github.com/GackedPeach/folder-tidy/issues/new?template=bug_report.yml)
 
-**[Open the beta download page](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.1)**
+## Get the app
 
-You do not need to install Python or download the code to use these builds.
+No Python installation needed for these downloads.
 
-| Your computer | App download |
+| Your computer | Download |
 | --- | --- |
-| Windows 10/11, 64-bit | [Download the Windows .exe](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-windows-x64.exe) |
-| Mac with Apple Silicon (M1 or newer), macOS 15+ | [Download the Apple Silicon Mac app](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-macos-arm64.dmg) |
-| Intel Mac, macOS 15+ | [Download the Intel Mac app](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-macos-x64.dmg) |
-| Linux 64-bit, glibc 2.35+ (Ubuntu 22.04+ and compatible) | [Download the Linux app](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-linux-x64.tar.gz) |
+| Windows 10/11, 64-bit | [Windows .exe](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-windows-x64.exe) |
+| Apple Silicon Mac (M1 or newer), macOS 15+ | [Mac — Apple Silicon](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-macos-arm64.dmg) |
+| Intel Mac, macOS 15+ | [Mac — Intel](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-macos-x64.dmg) |
+| Linux 64-bit, glibc 2.35+ (Ubuntu 22.04+ and compatible) | [Linux archive](https://github.com/GackedPeach/folder-tidy/releases/download/v1.2.0-beta.1/FileOrganiserPro-v1.2.0-beta.1-linux-x64.tar.gz) |
 
-**Windows:** open the `.exe`. **Mac:** open the `.dmg` and drag the app to
-Applications. **Linux:** extract the whole archive and open `FileOrganiserPro`
-inside it; keep its `_internal` folder alongside it. Linux needs a graphical
-X11/XWayland desktop.
+**Windows:** open the `.exe`. **Mac:** open the `.dmg` and drag the app to Applications. **Linux:** extract the whole archive, then open `FileOrganiserPro`; keep its `_internal` folder alongside it. Linux needs an X11/XWayland desktop.
 
-These are unsigned community beta builds. Windows or macOS may require manual
-approval on first launch. The Mac apps are not Apple-notarised.
+These beta builds are unsigned, and the Mac apps aren't Apple-notarised. Your system may ask for approval on first launch.
 
-## What it does
+## How it works
 
-- Group copies by file type, extension, modified/created date, or size.
-- Use year, month or day folders when sorting by date.
-- Preview destinations and choose individual files before copying.
-- Filter files, check for duplicates, and save a report of each run.
-- Keep originals in place, verify copies, and never replace existing files.
-- Work locally with a dark or light interface and cancellable background jobs.
+1. Pick a folder and choose how to sort it.
+2. Preview the files and their destinations. Deselect anything you don't want copied.
+3. Click **Organise copies**, then open the results.
 
-Date sorting uses filesystem dates. Photo capture metadata and Google Takeout
-sidecars are not interpreted. Filters apply, so review Advanced options to
-choose whether hidden files and other exclusions are included.
+You can sort by file type, extension, size, or modified/created date, with year, month or day folders. There are filters, a duplicate finder, dark/light themes, and a report for each run.
 
-## Try it and report problems
+Copies are verified, existing files aren't replaced, and originals stay in place. Copies take extra disk space; running it again makes another set. Keep a separate backup of anything irreplaceable.
 
-Start with a small sample of files during beta testing. If something goes
-wrong, [report a bug](https://github.com/GackedPeach/folder-tidy/issues/new?template=bug_report.yml)
-with your operating system, app version and what happened. We can improve the
-app as issues are found.
+Date sorting uses filesystem dates, not photo capture dates or Google Takeout sidecars. Check **Advanced options** if you want hidden files or other excluded files included.
 
-## Source code
+## Found something odd?
 
-[App source and full instructions](file-organiser-pro/) ·
-[Build instructions](packaging/) ·
-[Release downloads](https://github.com/GackedPeach/folder-tidy/releases)
+[Open a bug report](https://github.com/GackedPeach/folder-tidy/issues/new?template=bug_report.yml) with your operating system, app version, and what happened. Feedback from trying it on different machines helps.
 
-The app is written in Python/Tkinter, with no runtime third-party Python
-packages. Native downloads bundle the runtime. Development has included brief
-AI coding assistance from ChatGPT and Grok.
+## Working on the code
 
-## Original Folder Tidy script
+Built with Python and Tkinter, with some AI coding help along the way. The app uses the Python standard library; packaged downloads include the runtime.
 
-The repository also keeps the earlier, smaller command-line organiser in
-[`tidy.py`](tidy.py), with its tests in [`test_tidy.py`](test_tidy.py). That
-legacy script **moves files** when run with `--apply`; the desktop app above
-is the copy-only program.
+[Run from source and full app notes](file-organiser-pro/) · [Build instructions](packaging/) · [All releases](https://github.com/GackedPeach/folder-tidy/releases)
+
+<details>
+<summary>The original Folder Tidy script</summary>
+
+This repo started with the smaller command-line script in [`tidy.py`](tidy.py). It's still here, but **it moves files when you use `--apply`**. The desktop app above is copy-only.
 
 ```sh
 python tidy.py "path/to/folder"          # preview only
 python tidy.py "path/to/folder" --apply  # legacy move operation
 python -m unittest -v                   # legacy script tests
 ```
+
+</details>
