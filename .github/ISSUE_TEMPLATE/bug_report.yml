@@ -1,0 +1,32 @@
+name: Report a beta bug
+description: Help improve File Organiser Pro.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: input
+    id: system
+    attributes:
+      label: Operating system and app version
+      placeholder: Windows 11, File Organiser Pro 1.2.0-beta.1
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you do?
+      description: Include the sorting method and steps needed to reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+      description: You can include an error message or screenshot. Remove private paths and personal details first; do not upload your personal files.
+    validations:
+      required: true

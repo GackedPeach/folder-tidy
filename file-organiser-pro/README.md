@@ -1,105 +1,169 @@
-# File Organiser Pro — v1.1
+# File Organiser Pro — v1.2.0-beta.1
 
-A local-first, cross-platform desktop file organiser, written in Python 3.10+ and Tkinter. No cloud access, telemetry, package manager or third-party Python dependencies.
+A small, local Python/Tkinter app for sorting messy downloads, photos, videos
+and backup exports. It creates **independent copies** in a **Files Sorted**
+folder inside the folder you choose. **Your originals stay in place.**
 
-## Getting started
+No account, cloud connection or third-party Python packages are needed.
+This is a public beta of an early-development personal utility.
 
-Keep `file_organiser_pro.py` and `organiser_core.py` together in the same directory.
+## Download the app
 
-**Windows** (Python installed):
+**[Get the Windows, Mac or Linux beta download](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.1)**
+
+Packaged downloads include Python and Tkinter; no Python installation is
+needed. Windows has a standalone `.exe`, Mac has separate Apple Silicon and
+Intel `.dmg` downloads, and Linux has a `.tar.gz` containing the executable and
+its support folder. See the release page for system requirements and launch
+instructions. Beta builds are unsigned; the Mac apps are not notarised.
+
+## Run from source
+
+Keep `file_organiser_pro.py` and `organiser_core.py` together. Use Python 3.10+
+with Tkinter installed, open a terminal in this folder, and run:
 
 ```powershell
+# Windows
 py file_organiser_pro.py
 ```
 
-**Linux / macOS**:
-
 ```bash
+# Linux or macOS
 python3 file_organiser_pro.py
 ```
 
-On Debian/Ubuntu, install Tkinter if it isn't already available:
+Some Debian/Ubuntu installations need `sudo apt install python3-tk`.
+On macOS, use a Python distribution with Tkinter.
 
-```bash
-sudo apt install python3-tk
-```
+## Organise copies
 
-On macOS, use a Python distribution that includes Tkinter.
+1. Choose a **Source folder**. Include subfolders is enabled for new settings;
+   existing preferences are retained.
+2. Choose **Organise by** and name your results folder (default: **Files Sorted**).
+3. Click **Preview files**. Review the original paths, groups, copy destinations,
+   selected count and additional space needed. Double-click a row or press Space
+   to include or exclude it.
+4. Click **Organise copies**. The app copies and checks each selected file,
+   leaving the original at its existing path. Existing output files are never
+   overwritten; collisions found during preview get names such as `photo_1.jpg`.
+5. Click **Open results**. A timestamped **Organisation report … .txt** inside
+   the results folder lists copied, skipped and failed files and their paths.
+   The Activity tab can open the last report or export TXT/CSV logs.
 
-**Start with a disposable test directory and a backup.** This program physically moves files. It does not copy them for ordinary organisation.
+The app checks free space before starting. Copies consume additional disk
+space. Repeating an operation creates another set of copies with new names;
+it does not merge or replace previous results.
 
-## How to use
+### Sorting layouts
 
-1. Select a folder. `Include subfolders` is off by default; the chosen output directory is always excluded from scanning.
-2. Choose a method: Category, Extension, Date Modified, Date Created, or File Size.
-3. Optionally set exclusions, extensions to include, a glob such as `*invoice*`, and file-size limits such as `500 KB` or `2 GB`. A plain number means bytes.
-4. Click **Preview Moves**. Double-click a row to toggle whether it is included, or use **Include All**, **Exclude All** and **Toggle Highlighted**.
-5. Click **Organise Selected**. The program rechecks source metadata and destination availability before each move. It refuses to overwrite an existing path. **Cancel Job** stops at a safe boundary.
-6. Use **Undo Last** to restore the last operation, including after restarting the application. A changed file, missing destination or occupied original path is **not** blindly overwritten.
-7. Use **Find Duplicates** to display size-and-SHA-256 matches without deleting anything. The duplicate tab is read-only.
-8. Use **Export TXT / CSV…** in Activity Log to save a report from the current session.
+| Organise by | Example inside Files Sorted |
+| --- | --- |
+| File type | `Images/photo.jpg`, `Videos/clip.mp4`, `Documents/notes.txt` |
+| File extension | `JPG/photo.jpg`, `MP4/clip.mp4`, `PDF/receipt.pdf` |
+| Date modified | `2024/05 - May/photo.jpg` |
+| Date created | `2024/05 - May/photo.jpg` |
+| File size | `Small - Under 1 MB/notes.txt` |
 
-## New in v1.1
+For either date method, choose **Year**, **Month** or **Day** grouping. Day
+grouping adds a day folder, for example `2024/05 - May/17/photo.jpg`.
+Dates use local-time filesystem timestamps. Creation date falls back to
+modified date when creation metadata is unavailable. Downloading or extracting
+files may change those dates: **photo capture dates, EXIF and Google Takeout
+JSON sidecars are not interpreted**.
 
-- No-overwrite moves using exclusive destination creation. Same-filesystem regular files use hard-link/unlink where supported; other cases use exclusive-create streaming copy/unlink.
-- Source identity, size and modification-time checks at preview and move time.
-- Hidden folders, symbolic links, Windows junctions/reparse directories, ignored names, and configurable excluded directory patterns are excluded from recursive scans.
-- Previews are invalidated when relevant settings or the selected directory change.
-- Background worker threads and a responsive progress indicator with count, remaining files and current filename. All Tkinter widgets update on the main thread.
-- Per-file inclusion/exclusion controls.
-- Extension, filename glob, minimum-size and maximum-size filters.
-- Text/CSV activity-log export.
-- Last-used directory restored on launch.
-- Persistent, single-level undo journal.
-- Light/dark themes.
-- SHA-256 duplicate detection with a size pre-filter; zero automatic deletions.
-- Custom category definitions can now override extensions assigned by built-in categories.
+File-type groups cover common images (including HEIC, AVIF and several RAW
+formats), videos, audio, documents, spreadsheets, archives and more. Unknown
+extensions go to **Others**. Extension mode creates **No Extension** for files
+without a suffix. Custom file types can override built-in category assignments.
 
-## Settings and history
+### Filters and duplicates
 
-The existing settings JSON is retained with its original keys and updated with new optional keys:
+**Advanced options** contains hidden-file handling, ignored names/extensions,
+excluded folders, included extensions, a filename pattern and minimum/maximum
+size. Lists use commas; filename patterns accept `*` and `?`; sizes accept
+values such as `500 KB`, `2 GB` or `1 GiB`. A plain number means bytes.
 
-- `~/.file_organiser_pro.json` — application configuration, including last-used folder and theme.
-- `~/.file_organiser_pro_history.json` — last successful organisation operation for undo.
+Hidden files, temporary files and common tool folders are excluded by default.
+Review these options if you want them included. Symbolic links and junctions
+are always excluded; the chosen output directory is never rescanned.
+Only matching, selected regular files are copied; empty folders are not copied.
 
-Both files are updated via temporary-file-and-replace writes. Older settings files remain readable. The undo journal is not a permanent, multiple-version operation history. Starting a new **successful** organisation run replaces the previous operation's undo entries.
+The **Duplicates** tab finds identical contents using size and SHA-256 hashes.
+It is read-only. The app never automatically deletes duplicate files.
 
-## Safety limitations and design choices
+## Keeping originals safe
 
-- No external process can be completely controlled: another application writing, renaming, or replacing files concurrently can cause race conditions. Metadata checks and exclusive destination creation reduce risk but cannot make an entire multi-file operation transactional.
-- A sudden crash or power failure between a file move and the undo-journal write can leave that particular move unjournaled. You can still locate the file inside the destination folder. For irreplaceable data, keep a separate backup.
-- Duplicate detection hashes file contents, but does **not** confirm semantic equivalence (e.g. two differently encoded photos may look identical but have different hashes).
-- If native creation-time metadata is unavailable, Date Created falls back to modification time on non-Windows systems; it does **not** misinterpret Linux inode-change time as creation time.
-- Empty directories are left in place after organising/undoing, by design.
-- Hidden-file detection recognises dot-names on POSIX and Windows hidden attributes where available. A filesystem-specific hidden convention may differ.
-- Metadata-only stale-preview checks cannot detect an adversary who replaces content while restoring all compared metadata. SHA-256 is used for duplicate detection, not for every file move.
-- Basic automated tests and an interactive GUI smoke test were run on Linux. Windows and macOS compatibility is designed for, but has not been independently verified in those environments.
+- Copying uses exclusive destination creation, never hard links or moves.
+  Editing an organised copy does not edit its original.
+- Source identity, size and modification time are checked against the preview
+  and again during copying. Changed or missing files are skipped.
+- Each completed copy is checked against the streamed source SHA-256 digest.
+  File timestamps and permissions are copied where supported by the filesystem.
+- Cancellation removes only an unfinished output created by this operation.
+  Completed copies and every original remain in place. Closing during work
+  requests cancellation and waits for the worker and report to finish.
+- The report is created before copying. A report-write failure stops further
+  copies and leaves recovery information in Activity. A last-session shortcut
+  failure leaves the report in the results folder.
+- Activity export also refuses to overwrite an existing file.
 
-## Run automated tests
+Keep a separate backup of irreplaceable files. Copy verification and metadata
+checks cannot make a changing filesystem transactional or replace a backup.
+A crash, storage failure or external modification can leave an incomplete
+output or report. The original is never intentionally deleted by this app.
+Metadata changes that preserve all checked attributes may evade stale-file
+checks; the app does not interpret photo or backup semantics.
 
-From the extracted project directory:
+## Settings and previous versions
+
+Settings remain at `~/.file_organiser_pro.json`, with existing preferences
+retained and `date_granularity` added. The old default output name `Organised`
+is migrated to `Files Sorted`; other custom output names are kept.
+The last copy-session shortcut is saved separately at
+`~/.file_organiser_pro_last_run.json`.
+
+**Undo was removed in v1.2 because organisation now keeps every original.**
+Completed copies are left for you to manage manually. Legacy v1.1 move journals
+at `~/.file_organiser_pro_history.json` are neither loaded nor overwritten.
+If you need to reverse a move made by an older release, retain that release
+and its journal. This version does not convert or replay old move history.
+
+## Development and tests
+
+The core and interface are separate modules; the app uses only the standard
+library. From this directory:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-The tests use temporary directories; they do not organise your real files.
+Tests use synthetic temporary files and isolated settings. Tk tests use a
+withdrawn window and skip if Tk or a display is unavailable. On a headless
+Linux system with Xvfb, use:
 
-## Project layout
-
-```text
-file_organiser_pro_v1_1/
-├── file_organiser_pro.py     # Tkinter user interface
-├── organiser_core.py         # Filesystem and hash operations
-├── tests/
-│   └── test_organiser_core.py
-└── README.md
+```bash
+xvfb-run -a python -m unittest discover -s tests -v
 ```
 
-## Project background and direction
+The v1.2 copy engine and Tk workflows have been exercised on Windows with
+Python 3.12, including independent copies, date layouts, failure/cancellation,
+reports and a 10,000-row preview. Symlink tests skip when the session lacks
+permission to create them. The release workflow also runs the source tests and an isolated packaged-app
+check on Windows, Linux and both Mac architectures before publishing all
+downloads together. The packaged check launches Tk, previews fixture files,
+creates independent copies, checks originals and verifies a saved report.
+This is automated beta validation; broader testing on users' own machines
+and storage setups is still welcome.
 
-This is an early-development personal utility, not a groundbreaking replacement for a file manager. My main use case is sorting very messy local downloads and backups, especially Google Takeout exports containing photos, videos and device files. Such exports can contain tens of thousands of files, and I want more control over how they are sorted. The application is also intended to be useful for other large, untidy folders.
+## Project background
 
-Google Takeout-specific metadata, JSON sidecars, photo albums and backup formats are **not yet interpreted**. This is a general-purpose file organiser, not a dedicated Google Takeout recovery or archival tool. Always back up irreplaceable files, and test on disposable copies first. Even with safer moves, interrupted operations, storage faults or concurrent changes can cause problems.
+This is a practical personal tool for sorting very untidy local downloads and
+backups, especially Google Takeout exports with thousands of photos, videos
+and device files. It is still early development, with reliability, clear
+previews and usability taking priority. Development has included AI coding
+assistance from ChatGPT and Grok.
 
-Development has included brief AI coding assistance from ChatGPT and Grok. Future work will focus on reliability with large datasets, usability, and better handling of complex backup exports.
+Version history: v1.0 prototype → v1.1 safety and usability → v1.1.1 Windows
+reliability fixes → v1.2 copy-only organisation, clearer date options and a
+refined interface. The separate `tidy.py` in the repository root remains the
+original command-line tool and moves files; this desktop app is copy-only.
