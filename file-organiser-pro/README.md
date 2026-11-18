@@ -1,53 +1,105 @@
-# File Organiser Pro 🗂️
+# File Organiser Pro — v1.1
 
-**Early development — v1.0 (prototype)**
+A local-first, cross-platform desktop file organiser, written in Python 3.10+ and Tkinter. No cloud access, telemetry, package manager or third-party Python dependencies.
 
-File Organiser Pro is a small, local-first desktop file organiser built with Python and Tkinter for Windows, Linux and macOS. It is a personal utility, not an attempt to reinvent file management.
+## Getting started
 
-## Why I started it
+Keep `file_organiser_pro.py` and `organiser_core.py` together in the same directory.
 
-My main use case is cleaning up the sprawling folders that can result from downloading data through **Google Takeout**: Google Photos, videos, device backups, documents and whatever else has accumulated over the years. Those downloads can contain tens of thousands of files and nested directories, and it is not always convenient to sort through them using a regular file manager.
+**Windows** (Python installed):
 
-I wanted a straightforward tool that could preview where files will go, organise them using different rules, and give me a bit more control over how I deal with messy backups. It may also be useful for ordinary Downloads folders and other local collections.
-
-**This is not a Google Takeout parser.** It does not reconstruct albums, interpret Takeout JSON sidecars, reconcile duplicate image versions or preserve original Google Photos metadata beyond what the filesystem already exposes. Those would require separate, purpose-built features.
-
-## What v1.0 does
-
-- Organises by file category, extension, modified date, creation-date metadata or size.
-- Provides a Tkinter desktop interface and a preview before moving files.
-- Optionally scans nested subfolders, with basic hidden-file and ignore-pattern controls.
-- Supports custom extension categories and an activity log.
-- Avoids known destination names when planning moves and offers an in-session undo for successful moves.
-- Saves preferences to `~/.file_organiser_pro.json`.
-
-## Run
-
-Python 3.10+ recommended. No third-party Python dependencies.
-
-```sh
-python file_organiser_pro.py
+```powershell
+py file_organiser_pro.py
 ```
 
-On Windows, `py file_organiser_pro.py` may be appropriate. Debian/Ubuntu users may need to install `python3-tk`.
+**Linux / macOS**:
 
-## ⚠️ Early prototype — protect your data
+```bash
+python3 file_organiser_pro.py
+```
 
-**Use copies and a disposable test folder first, especially for Google Takeout archives or irreplaceable photos.** This version moves files rather than copying them, and the initial preview and undo mechanisms have limitations:
+On Debian/Ubuntu, install Tkinter if it isn't already available:
 
-- Large operations run on the UI thread and can become unresponsive.
-- Undo history is lost when the application exits.
-- Changing settings after a preview may leave a stale plan.
-- A race between destination checks and moving a file may cause an unexpected overwrite on some platforms.
-- Recursive scanning does not fully exclude hidden directories.
-- Linux `st_ctime` is not equivalent to file creation time.
+```bash
+sudo apt install python3-tk
+```
 
-The next version focuses on safer moves, better scanning and previews, persistent undo, background processing, filters and duplicate inspection.
+On macOS, use a Python distribution that includes Tkinter.
 
-## Development
+**Start with a disposable test directory and a backup.** This program physically moves files. It does not copy them for ordinary organisation.
 
-This is a personal learning project and is still changing. ChatGPT and Grok have been used as coding assistants during development.
+## How to use
 
-## Repository
+1. Select a folder. `Include subfolders` is off by default; the chosen output directory is always excluded from scanning.
+2. Choose a method: Category, Extension, Date Modified, Date Created, or File Size.
+3. Optionally set exclusions, extensions to include, a glob such as `*invoice*`, and file-size limits such as `500 KB` or `2 GB`. A plain number means bytes.
+4. Click **Preview Moves**. Double-click a row to toggle whether it is included, or use **Include All**, **Exclude All** and **Toggle Highlighted**.
+5. Click **Organise Selected**. The program rechecks source metadata and destination availability before each move. It refuses to overwrite an existing path. **Cancel Job** stops at a safe boundary.
+6. Use **Undo Last** to restore the last operation, including after restarting the application. A changed file, missing destination or occupied original path is **not** blindly overwritten.
+7. Use **Find Duplicates** to display size-and-SHA-256 matches without deleting anything. The duplicate tab is read-only.
+8. Use **Export TXT / CSV…** in Activity Log to save a report from the current session.
 
-This project lives alongside the smaller `tidy.py` CLI utility in the parent repository. The two are separate tools.
+## New in v1.1
+
+- No-overwrite moves using exclusive destination creation. Same-filesystem regular files use hard-link/unlink where supported; other cases use exclusive-create streaming copy/unlink.
+- Source identity, size and modification-time checks at preview and move time.
+- Hidden folders, symbolic links, Windows junctions/reparse directories, ignored names, and configurable excluded directory patterns are excluded from recursive scans.
+- Previews are invalidated when relevant settings or the selected directory change.
+- Background worker threads and a responsive progress indicator with count, remaining files and current filename. All Tkinter widgets update on the main thread.
+- Per-file inclusion/exclusion controls.
+- Extension, filename glob, minimum-size and maximum-size filters.
+- Text/CSV activity-log export.
+- Last-used directory restored on launch.
+- Persistent, single-level undo journal.
+- Light/dark themes.
+- SHA-256 duplicate detection with a size pre-filter; zero automatic deletions.
+- Custom category definitions can now override extensions assigned by built-in categories.
+
+## Settings and history
+
+The existing settings JSON is retained with its original keys and updated with new optional keys:
+
+- `~/.file_organiser_pro.json` — application configuration, including last-used folder and theme.
+- `~/.file_organiser_pro_history.json` — last successful organisation operation for undo.
+
+Both files are updated via temporary-file-and-replace writes. Older settings files remain readable. The undo journal is not a permanent, multiple-version operation history. Starting a new **successful** organisation run replaces the previous operation's undo entries.
+
+## Safety limitations and design choices
+
+- No external process can be completely controlled: another application writing, renaming, or replacing files concurrently can cause race conditions. Metadata checks and exclusive destination creation reduce risk but cannot make an entire multi-file operation transactional.
+- A sudden crash or power failure between a file move and the undo-journal write can leave that particular move unjournaled. You can still locate the file inside the destination folder. For irreplaceable data, keep a separate backup.
+- Duplicate detection hashes file contents, but does **not** confirm semantic equivalence (e.g. two differently encoded photos may look identical but have different hashes).
+- If native creation-time metadata is unavailable, Date Created falls back to modification time on non-Windows systems; it does **not** misinterpret Linux inode-change time as creation time.
+- Empty directories are left in place after organising/undoing, by design.
+- Hidden-file detection recognises dot-names on POSIX and Windows hidden attributes where available. A filesystem-specific hidden convention may differ.
+- Metadata-only stale-preview checks cannot detect an adversary who replaces content while restoring all compared metadata. SHA-256 is used for duplicate detection, not for every file move.
+- Basic automated tests and an interactive GUI smoke test were run on Linux. Windows and macOS compatibility is designed for, but has not been independently verified in those environments.
+
+## Run automated tests
+
+From the extracted project directory:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The tests use temporary directories; they do not organise your real files.
+
+## Project layout
+
+```text
+file_organiser_pro_v1_1/
+├── file_organiser_pro.py     # Tkinter user interface
+├── organiser_core.py         # Filesystem and hash operations
+├── tests/
+│   └── test_organiser_core.py
+└── README.md
+```
+
+## Project background and direction
+
+This is an early-development personal utility, not a groundbreaking replacement for a file manager. My main use case is sorting very messy local downloads and backups, especially Google Takeout exports containing photos, videos and device files. Such exports can contain tens of thousands of files, and I want more control over how they are sorted. The application is also intended to be useful for other large, untidy folders.
+
+Google Takeout-specific metadata, JSON sidecars, photo albums and backup formats are **not yet interpreted**. This is a general-purpose file organiser, not a dedicated Google Takeout recovery or archival tool. Always back up irreplaceable files, and test on disposable copies first. Even with safer moves, interrupted operations, storage faults or concurrent changes can cause problems.
+
+Development has included brief AI coding assistance from ChatGPT and Grok. Future work will focus on reliability with large datasets, usability, and better handling of complex backup exports.
