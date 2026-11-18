@@ -1,0 +1,23 @@
+FILE ORGANISER PRO 1.2 BETA
+
+No Python installation is required for the packaged downloads.
+
+Windows (64-bit): download the Windows .exe and double-click it.
+Mac: choose Apple Silicon (arm64) or Intel (x64), open the .dmg, and drag
+File Organiser Pro into Applications. Then open it from Applications.
+Linux (64-bit, glibc 2.35+, such as Ubuntu 22.04 or newer): extract the
+.tar.gz completely and open FileOrganiserPro inside the extracted folder.
+Keep the _internal folder with the Linux executable. A graphical desktop
+with X11/XWayland is required.
+
+These are unsigned community beta builds. Windows or macOS may require
+manual approval before first launch. The Mac build is not Apple-notarised.
+
+Choose a source folder, preview your layout, then Organise copies.
+Results go into Files Sorted. Your originals stay in place.
+Sorting by date uses file timestamps, not photo capture metadata.
+Filters apply; review Advanced options for hidden and excluded files.
+
+Start with a small sample of files while beta testing.
+Source code, documentation and bug reports:
+https://github.com/GackedPeach/folder-tidy

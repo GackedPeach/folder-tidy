@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 APP_NAME = "File Organiser Pro"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.0-beta.1"
 CONFIG_FILE = Path.home() / ".file_organiser_pro.json"
 HISTORY_FILE = Path.home() / ".file_organiser_pro_last_run.json"
 

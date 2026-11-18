@@ -1,14 +1,23 @@
-# File Organiser Pro — v1.2.0 preview
+# File Organiser Pro — v1.2.0-beta.1
 
 A small, local Python/Tkinter app for sorting messy downloads, photos, videos
 and backup exports. It creates **independent copies** in a **Files Sorted**
 folder inside the folder you choose. **Your originals stay in place.**
 
 No account, cloud connection or third-party Python packages are needed.
-This is an early-development personal utility; native Windows, Linux and
-macOS app packages are planned after this feature and interface pass.
+This is a public beta of an early-development personal utility.
 
-## Start the app
+## Download the app
+
+**[Get the Windows, Mac or Linux beta download](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.1)**
+
+Packaged downloads include Python and Tkinter; no Python installation is
+needed. Windows has a standalone `.exe`, Mac has separate Apple Silicon and
+Intel `.dmg` downloads, and Linux has a `.tar.gz` containing the executable and
+its support folder. See the release page for system requirements and launch
+instructions. Beta builds are unsigned; the Mac apps are not notarised.
+
+## Run from source
 
 Keep `file_organiser_pro.py` and `organiser_core.py` together. Use Python 3.10+
 with Tkinter installed, open a terminal in this folder, and run:
@@ -139,8 +148,12 @@ xvfb-run -a python -m unittest discover -s tests -v
 The v1.2 copy engine and Tk workflows have been exercised on Windows with
 Python 3.12, including independent copies, date layouts, failure/cancellation,
 reports and a 10,000-row preview. Symlink tests skip when the session lacks
-permission to create them. This update has not yet been run on Linux or macOS;
-cross-platform builds and native installers are a later step.
+permission to create them. The release workflow also runs the source tests and an isolated packaged-app
+check on Windows, Linux and both Mac architectures before publishing all
+downloads together. The packaged check launches Tk, previews fixture files,
+creates independent copies, checks originals and verifies a saved report.
+This is automated beta validation; broader testing on users' own machines
+and storage setups is still welcome.
 
 ## Project background
 
