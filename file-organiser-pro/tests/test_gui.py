@@ -73,6 +73,44 @@ class GuiTests(unittest.TestCase):
             for i in range(count)
         ]
 
+    def test_preview_after_closing_advanced_options(self):
+        source = self.folder / "pictures"
+        source.mkdir()
+        (source / "photo.jpg").write_bytes(b"photo")
+        callback_errors = []
+        with patch.object(self.root, "report_callback_exception",
+                          side_effect=lambda *error: callback_errors.append(error)):
+            with patch.object(gui.filedialog, "askdirectory", return_value=str(source)):
+                self.app.browse_folder()
+            self.pump_until(lambda: not self.app.busy)
+            for close_with_done in (True, False, True):
+                self.app.open_filters()
+                dialog = next(child for child in self.root.winfo_children()
+                              if isinstance(child, tk.Toplevel))
+                if close_with_done:
+                    def find_done(widget):
+                        for child in widget.winfo_children():
+                            if isinstance(child, gui.ttk.Button) and child.cget("text") == "Done":
+                                return child
+                            found = find_done(child)
+                            if found is not None:
+                                return found
+                    find_done(dialog).invoke()
+                else:
+                    dialog.destroy()
+            preview = next(button for button in self.app.action_buttons
+                           if button.cget("text") == "1. Preview files")
+            preview.invoke()
+            self.assertEqual(callback_errors, [])
+            self.pump_until(lambda: not self.app.busy)
+        self.assertEqual(callback_errors, [])
+        self.assertEqual(len(self.app.tree.get_children()), 1)
+        self.assertFalse(preview.instate(["disabled"]))
+        self.assertFalse(self.app.copy_btn.instate(["disabled"]))
+        self.assertFalse((source / "Files Sorted").exists())
+        self.assertIn("No files copied", self.app.progress_text.cget("text"))
+        self.assertIn(str(source / "Files Sorted"), self.app.destination_hint.cget("text"))
+
     def test_large_preview_yields_to_event_loop(self):
         self.make_preview(10000)
         heartbeat = []
@@ -80,10 +118,10 @@ class GuiTests(unittest.TestCase):
         self.app.populate_preview()
         self.assertTrue(self.app.busy)
         self.assertEqual(len(self.app.tree.get_children()), 200)
-        self.pump_until(lambda: not self.app.busy)
+        self.pump_until(lambda: not self.app.busy, timeout=30)
         self.assertTrue(heartbeat)
         self.assertEqual(len(self.app.tree.get_children()), 10000)
-        self.assertEqual(self.app.progress_text.cget("text"), "Preview ready")
+        self.assertEqual(self.app.progress_text.cget("text"), "Preview ready · No files copied")
 
     def test_setting_change_cancels_outdated_preview_render(self):
         self.make_preview(500)

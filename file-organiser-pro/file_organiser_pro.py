@@ -71,7 +71,7 @@ class FileOrganiser:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(80, self.poll_events)
         if self.folder_path.get() and Path(self.folder_path.get()).is_dir():
-            self.summary.configure(text=f"Previous folder: {self.folder_path.get()}. Select Scan or Preview.")
+            self.summary.configure(text=f"Previous folder: {self.folder_path.get()}. Click Preview files to begin.")
         self.update_actions()
 
     def bind_changes(self):
@@ -205,6 +205,8 @@ class FileOrganiser:
         self.summary = ttk.Label(workspace, text="Choose a folder, then preview your organised copies.",
                                  style="Summary.TLabel", wraplength=750)
         self.summary.pack(anchor="w", fill="x", pady=(0, 10))
+        self.destination_hint = ttk.Label(workspace, text="", style="Sub.TLabel", wraplength=750)
+        self.destination_hint.pack(anchor="w", fill="x", pady=(0, 10))
         self.notebook = ttk.Notebook(workspace)
         self.notebook.pack(fill="both", expand=True)
         preview_tab = ttk.Frame(self.notebook, padding=12)
@@ -278,6 +280,14 @@ class FileOrganiser:
         if date_mode:
             hint += f" Grouping: {self.date_group.get().lower()}."
         self.sort_hint.configure(text=hint)
+        if self.folder_path.get().strip():
+            try:
+                output = core.get_output(core.get_root(self.folder_path.get()), self.settings_snapshot())
+                self.destination_hint.configure(text=f"Results: {output} (created when you organise copies)")
+            except (ValueError, OSError):
+                self.destination_hint.configure(text="Choose a valid source and results folder to see the output path.")
+        else:
+            self.destination_hint.configure(text="Choose a source folder to see where copies will go.")
 
     def open_filters(self):
         if self.busy:
@@ -333,7 +343,9 @@ class FileOrganiser:
         ttk.Label(parent, text=label).pack(side="left", padx=(0, 4))
         entry = ttk.Entry(parent, textvariable=var, width=width)
         entry.pack(side="left", padx=(0, 14), fill="x" if grow else None, expand=grow)
-        self.editable_widgets.append((entry, "normal"))
+        # These fields belong to the modal Advanced options dialog. Tracking
+        # them as main-window controls would retain destroyed Tk widgets after
+        # the dialog closes and break the next job's set_busy() call.
 
     @staticmethod
     def make_tree(parent, columns, headings, widths):
@@ -659,8 +671,11 @@ class FileOrganiser:
         if isinstance(result, dict) and (result.get("report_error") or result.get("history_error")):
             self.progress_text.configure(text="Report needs attention. Your originals are unchanged.")
         elif name != "preview":
-            self.progress_text.configure(text="Stopped safely · Originals kept" if isinstance(result, dict) and result.get("cancelled")
-                                         else "Finished · Originals kept")
+            if name == "scan":
+                self.progress_text.configure(text="Scan complete · Click Preview files. No files copied.")
+            else:
+                self.progress_text.configure(text="Stopped safely · Originals kept" if isinstance(result, dict) and result.get("cancelled")
+                                             else "Finished · Originals kept")
 
     def scan_folder(self):
         try:
@@ -723,7 +738,7 @@ class FileOrganiser:
             else:
                 self.set_busy(False)
                 self.refresh_selection_summary()
-                self.progress_text.configure(text="Preview ready")
+                self.progress_text.configure(text="Preview ready · No files copied")
 
         insert_batch()
 

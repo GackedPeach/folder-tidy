@@ -39,6 +39,9 @@ def smoke_test(destination):
             gui.messagebox.showwarning = unexpected_dialog
             root = tk.Tk()
             root.withdraw()
+            callback_errors = []
+            root.report_callback_exception = lambda *error: callback_errors.append(
+                "".join(traceback.format_exception(*error)))
             app = gui.FileOrganiser(root)
             app.folder_path.set(str(source))
 
@@ -46,14 +49,27 @@ def smoke_test(destination):
                 deadline = time.monotonic() + 45
                 while app.busy and time.monotonic() < deadline:
                     root.update()
+                    if callback_errors:
+                        raise RuntimeError("Tk callback failed: " + callback_errors[0])
                     time.sleep(0.005)
+                if callback_errors:
+                    raise RuntimeError("Tk callback failed: " + callback_errors[0])
                 if app.busy:
                     raise RuntimeError("Smoke operation timed out")
 
-            app.preview_copies()
+            app.scan_folder()
             finish_job()
-            if len(app.planned_copies) != len(originals):
+            app.open_filters()
+            dialog = next(child for child in root.winfo_children() if isinstance(child, tk.Toplevel))
+            dialog.destroy()
+            preview_button = next(button for button in app.action_buttons
+                                  if button.cget("text") == "1. Preview files")
+            preview_button.invoke()
+            finish_job()
+            if len(app.planned_copies) != len(originals) or len(app.tree.get_children()) != len(originals):
                 raise RuntimeError("Packaged preview did not find all fixture files")
+            if preview_button.instate(["disabled"]) or app.copy_btn.instate(["disabled"]):
+                raise RuntimeError("Packaged preview left the controls disabled")
             plan = list(app.planned_copies)
             app.organise_files()
             finish_job()
