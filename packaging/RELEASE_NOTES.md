@@ -1,13 +1,17 @@
-## File Organiser Pro 1.2 — public beta
+## File Organiser Pro 1.2.0-beta.2
+
+Small fix for a frustrating one: opening and closing Advanced options could leave the app stuck when you clicked Preview files. That's fixed, with a regression check in both the GUI tests and packaged app check.
+
+The app now shows the full results-folder path, and scan/preview statuses make it clear that no files have been copied yet. Use **Organise copies** after reviewing the preview to create the output.
 
 Ready-to-run downloads are attached below. **You do not need Python.**
 
 | Your computer | Download |
 | --- | --- |
-| Windows 10/11, 64-bit | `FileOrganiserPro-v1.2.0-beta.1-windows-x64.exe` |
-| Mac with Apple Silicon (M1 or newer), macOS 15+ | `FileOrganiserPro-v1.2.0-beta.1-macos-arm64.dmg` |
-| Intel Mac, macOS 15+ | `FileOrganiserPro-v1.2.0-beta.1-macos-x64.dmg` |
-| Linux, 64-bit, glibc 2.35+ (Ubuntu 22.04+ and compatible) | `FileOrganiserPro-v1.2.0-beta.1-linux-x64.tar.gz` |
+| Windows 10/11, 64-bit | `FileOrganiserPro-v1.2.0-beta.2-windows-x64.exe` |
+| Mac with Apple Silicon (M1 or newer), macOS 15+ | `FileOrganiserPro-v1.2.0-beta.2-macos-arm64.dmg` |
+| Intel Mac, macOS 15+ | `FileOrganiserPro-v1.2.0-beta.2-macos-x64.dmg` |
+| Linux, 64-bit, glibc 2.35+ (Ubuntu 22.04+ and compatible) | `FileOrganiserPro-v1.2.0-beta.2-linux-x64.tar.gz` |
 
 **Windows:** download and open the `.exe`.
 **Mac:** open the `.dmg`, drag the app to Applications, then open it.

@@ -1,4 +1,4 @@
-# File Organiser Pro — v1.2.0-beta.1
+# File Organiser Pro — v1.2.0-beta.2
 
 A small, local Python/Tkinter app for sorting messy downloads, photos, videos
 and backup exports. It creates **independent copies** in a **Files Sorted**
@@ -9,7 +9,7 @@ This is a public beta of an early-development personal utility.
 
 ## Download the app
 
-**[Get the Windows, Mac or Linux beta download](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.1)**
+**[Get the Windows, Mac or Linux beta download](https://github.com/GackedPeach/folder-tidy/releases/tag/v1.2.0-beta.2)**
 
 Packaged downloads include Python and Tkinter; no Python installation is
 needed. Windows has a standalone `.exe`, Mac has separate Apple Silicon and
